@@ -129,11 +129,11 @@
             }
 
             loading = true;
-            const today = new Date().toISOString().split('T');
+            // Берем строго первые 10 символов даты (YYYY-MM-DD) без квадратных скобок
+            const today = new Date().toISOString().slice(0, 10);
             const isMovie = filters.type === 'movie';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
-            // Исправляем сортировку для сериалов (в TMDB/Seerr разные названия полей дат)
             let sortValue = filters.sort;
             if (sortValue === 'release_date.asc') {
                 sortValue = isMovie ? 'primary_release_date.asc' : 'first_air_date.asc';
@@ -142,22 +142,21 @@
             let params = [
                 `page=${page}`,
                 `language=ru`,
-                `sortBy=${sortValue}`
+                `sortBy=${encodeURIComponent(sortValue)}`
             ];
 
-            // Корректная фильтрация дат без дублирования параметров
             const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
             if (filters.year === 'all') {
-                params.push(`${dateGteKey}=${today}`);
+                params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
             } else {
-                params.push(`${dateGteKey}=${filters.year}-01-01`);
-                params.push(`${dateLteKey}=${filters.year}-12-31`);
+                params.push(`${dateGteKey}=${encodeURIComponent(filters.year + '-01-01')}`);
+                params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
             }
 
             if (filters.genre !== 'all') {
-                params.push(`genre=${filters.genre}`);
+                params.push(`genre=${encodeURIComponent(filters.genre)}`);
             }
 
             const url = `${domain}${endpoint}?${params.join('&')}`;
