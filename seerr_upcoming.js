@@ -29,7 +29,7 @@
     function SeerrCatalogComponent(object) {
         const network = new Lampa.Reguest();
         const scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
-        const html = $('<div></div>');
+        const html = $('<div class="seerr-catalog"></div>');
         const body = $('<div class="category-full"></div>');
         
         let items = [];
@@ -43,14 +43,17 @@
             type: 'movie',
             genre: 'all',
             year: 'all',
-            sort: 'popularity.desc'
+            sort: 'popularity.desc',
+            lang: 'all'
         };
 
         this.create = function () {
             this.activity.loader(true);
             this.renderHeader();
-            html.append(scroll.render());
             scroll.append(body);
+            html.append(scroll.render());
+
+            scroll.minus();
 
             scroll.onEnd = () => {
                 if (!loading && page < total_pages) {
@@ -70,6 +73,7 @@
                     <div class="simple-button selector filter-genre">Жанр: Все жанры</div>
                     <div class="simple-button selector filter-year">Год: Все годы</div>
                     <div class="simple-button selector filter-sort">Сортировка: Популярные</div>
+                    <div class="simple-button selector filter-lang">Язык: Все страны</div>
                 </div>
             `);
 
@@ -80,13 +84,23 @@
 
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
             header.find('.filter-year').on('hover:enter', () => this.openSelect('Год релиза', getYearsList(), 'year', '.filter-year', 'Год: '));
+            
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', {
                 'popularity.desc': 'Популярные',
                 'release_date.asc': 'По дате (сначала ближайшие)',
                 'vote_average.desc': 'По рейтингу'
             }, 'sort', '.filter-sort', 'Сортировка: '));
 
-            html.prepend(header);
+            header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', {
+                all: 'Все страны',
+                en: 'США / Великобритания (EN)',
+                ru: 'Россия (RU)',
+                ko: 'Корея (KO)',
+                ja: 'Япония (JA)'
+            }, 'lang', '.filter-lang', 'Язык: '));
+
+            // Добавляем панель фильтров внутрь скролла, чтобы страница корректно прокручивалась
+            scroll.append(header);
         };
 
         this.openSelect = function (title, listObj, filterKey, btnSelector, prefix) {
@@ -115,6 +129,7 @@
             items = [];
             last_focused = null;
             body.empty();
+            scroll.reset();
             this.activity.loader(true);
             this.loadData(false);
         };
@@ -129,7 +144,6 @@
             }
 
             loading = true;
-            // Берем строго первые 10 символов даты (YYYY-MM-DD) без квадратных скобок
             const today = new Date().toISOString().slice(0, 10);
             const isMovie = filters.type === 'movie';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
@@ -141,9 +155,13 @@
 
             let params = [
                 `page=${page}`,
-                `language=ru`,
                 `sortBy=${encodeURIComponent(sortValue)}`
             ];
+
+            // Добавляем фильтр языка оригинала только если он выбран пользователем
+            if (filters.lang !== 'all') {
+                params.push(`language=${encodeURIComponent(filters.lang)}`);
+            }
 
             const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
@@ -174,6 +192,8 @@
                     body.append('<div class="empty__title" style="padding: 2em;">Ничего не найдено</div>');
                 }
                 
+                // Пересчитываем высоту области прокрутки
+                scroll.update();
                 if (!append) this.start();
             }, (error) => {
                 loading = false;
@@ -224,7 +244,6 @@
                     }
                 }
 
-                // ИСПРАВЛЕНО: корректная загрузка постера через jQuery .attr() и прокси TMDB Lampa
                 const img = card.find('.card__img');
                 if (cardData.poster_path) {
                     img.attr('src', Lampa.TMDB.image('t/p/w300' + cardData.poster_path));
@@ -252,15 +271,15 @@
                 items.push(card);
             });
 
-            if (active) Lampa.Controller.collectionSet(this.render());
+            if (active) Lampa.Controller.collectionSet(scroll.render());
         };
 
         this.start = function () {
             active = true;
             Lampa.Controller.add('content', {
                 toggle: () => {
-                    Lampa.Controller.collectionSet(this.render());
-                    Lampa.Controller.collectionFocus(last_focused || false, this.render());
+                    Lampa.Controller.collectionSet(scroll.render());
+                    Lampa.Controller.collectionFocus(last_focused || false, scroll.render());
                 },
                 left: () => {
                     if (Navigator.canmove('left')) Navigator.move('left');
