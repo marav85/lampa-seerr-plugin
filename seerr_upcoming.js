@@ -9,9 +9,13 @@
 
     const SESSION_CACHE = {
         data: {},
+        tvDetails: {},
         state: null
     };
     const CACHE_TTL = 10 * 60 * 1000;
+
+    const HISTORY_KEY = 'seerr_search_history';
+    const MAX_HISTORY = 5;
 
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
 
@@ -65,6 +69,23 @@
         return text && /[а-яА-ЯёЁ]/.test(text);
     }
 
+    function getSearchHistory() {
+        const list = Lampa.Storage.get(HISTORY_KEY, []);
+        return Array.isArray(list) ? list : [];
+    }
+
+    function saveSearchHistory(query) {
+        if (!query) return;
+        let list = getSearchHistory().filter(item => item.toLowerCase() !== query.toLowerCase());
+        list.unshift(query);
+        if (list.length > MAX_HISTORY) list = list.slice(0, MAX_HISTORY);
+        Lampa.Storage.set(HISTORY_KEY, list);
+    }
+
+    function clearSearchHistory() {
+        Lampa.Storage.set(HISTORY_KEY, []);
+    }
+
     function SeerrCatalogComponent(object) {
         const network = new Lampa.Reguest();
         const scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
@@ -76,7 +97,6 @@
         let last_focused_index = 0;
         let page = 1;
         let total_pages = 1;
-        let loading = false;
         let loaded_pages = {};
         let min_cards_buffer = 40;
 
@@ -84,6 +104,8 @@
             type: 'movie',
             genre: 'all',
             year: 'all',
+            yearFrom: '',
+            yearTo: '',
             sort: 'popularity.desc',
             lang: 'all',
             search: ''
@@ -118,6 +140,7 @@
                 this.start();
             } else {
                 this.activity.loader(true);
+                loaded_pages = true;
                 this.loadData(false);
             }
 
@@ -125,57 +148,185 @@
         };
 
         this.loadNextPage = function () {
-            if (!loading && page < total_pages) {
+            if (page < total_pages) {
                 const nextPage = page + 1;
                 if (!loaded_pages[nextPage]) {
+                    loaded_pages[nextPage] = true;
                     page = nextPage;
                     this.loadData(true);
                 }
             }
         };
-
         this.renderHeader = function () {
             const yearsList = getYearsList();
-            const isUpcomingFeed = false;
-            const extraDisplay = isUpcomingFeed ? 'none' : 'inline-flex';
-            const sortDisplay = (isUpcomingFeed || filters.search) ? 'none' : 'inline-flex';
+            const isSearch = Boolean(filters.search);
+            const sortDisplay = isSearch ? 'none' : 'inline-flex';
             const searchLabel = filters.search ? `Поиск: ${filters.search}` : 'Поиск';
 
+            const getYearButtonText = () => {
+                if (filters.year === 'range' && (filters.yearFrom || filters.yearTo)) {
+                    const fromTxt = filters.yearFrom || '...';
+                    const toTxt = filters.yearTo || '...';
+                    return `Год: ${fromTxt}–${toTxt}`;
+                }
+                return `Год: ${yearsList[filters.year] || 'Все годы'}`;
+            };
+
             const btnStyle = 'margin: 0; display: inline-flex; align-items: center;';
-            const extraStyle = `margin: 0; display: ${extraDisplay}; align-items: center;`;
             const sortStyle = `margin: 0; display: ${sortDisplay}; align-items: center;`;
 
             const header = $(`
                 <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; align-items: center; gap: 0.8em; flex-wrap: wrap;">
                     <div class="simple-button selector filter-search" style="${btnStyle}">${searchLabel}</div>
                     <div class="simple-button selector filter-type" style="${btnStyle}">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
-                    <div class="simple-button selector filter-genre" style="${extraStyle}">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
-                    <div class="simple-button selector filter-year" style="${extraStyle}">Год: ${yearsList[filters.year] || 'Все годы'}</div>
+                    <div class="simple-button selector filter-genre" style="${btnStyle}">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
+                    <div class="simple-button selector filter-year" style="${btnStyle}">${getYearButtonText()}</div>
                     <div class="simple-button selector filter-sort" style="${sortStyle}">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
-                    <div class="simple-button selector filter-lang" style="${extraStyle}">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
+                    <div class="simple-button selector filter-lang" style="${btnStyle}">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
             `);
 
-            header.find('.filter-search').on('hover:enter', () => {
+            const applySearchQuery = (queryText) => {
+                filters.search = (queryText || '').trim();
+                if (filters.search) saveSearchHistory(filters.search);
+                header.find('.filter-search').text(filters.search ? `Поиск: ${filters.search}` : 'Поиск');
+                this.updateFilterVisibility();
+                this.resetAndReload();
+                Lampa.Controller.toggle('content');
+            };
+
+            const openKeyboard = () => {
                 Lampa.Input.edit({
                     title: 'Поиск (оставьте пустым для сброса)',
                     value: filters.search || '',
                     free: true,
                     nosave: true
                 }, (newValue) => {
-                    filters.search = (newValue || '').trim();
-                    header.find('.filter-search').text(filters.search ? `Поиск: ${filters.search}` : 'Поиск');
-                    this.updateFilterVisibility();
-                    this.resetAndReload();
-                    Lampa.Controller.toggle('content');
+                    applySearchQuery(newValue);
+                });
+            };
+
+            header.find('.filter-search').on('hover:enter', () => {
+                const history = getSearchHistory();
+                if (history.length === 0) {
+                    openKeyboard();
+                    return;
+                }
+
+                const menuItems = [
+                    { title: '⌨️ Новый поиск...', action: 'new' }
+                ];
+
+                if (filters.search) {
+                    menuItems.push({ title: '❌ Сбросить текущий поиск', action: 'clear_current' });
+                }
+
+                history.forEach(term => {
+                    menuItems.push({ title: `🕒 ${term}`, value: term, action: 'history' });
+                });
+
+                menuItems.push({ title: '🗑 Очистить историю поиска', action: 'clear_history' });
+
+                Lampa.Select.show({
+                    title: 'Поиск и история запросов',
+                    items: menuItems,
+                    onSelect: (selected) => {
+                        if (selected.action === 'new') {
+                            openKeyboard();
+                        } else if (selected.action === 'clear_current') {
+                            applySearchQuery('');
+                        } else if (selected.action === 'history') {
+                            applySearchQuery(selected.value);
+                        } else if (selected.action === 'clear_history') {
+                            clearSearchHistory();
+                            Lampa.Noty.show('История поиска очищена');
+                            Lampa.Controller.toggle('content');
+                        }
+                    },
+                    onBack: () => {
+                        Lampa.Controller.toggle('content');
+                    }
                 });
             });
-
             header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', TYPES, 'type', '.filter-type', 'Тип: '));
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
-            header.find('.filter-year').on('hover:enter', () => this.openSelect('Год релиза', yearsList, 'year', '.filter-year', 'Год: '));
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', SORTS, 'sort', '.filter-sort', 'Сортировка: '));
             header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', LANGS, 'lang', '.filter-lang', 'Язык: '));
+
+            header.find('.filter-year').on('hover:enter', () => {
+                const selectItems = [
+                    {
+                        title: '📅 Указать диапазон (от и до)...',
+                        value: 'range',
+                        selected: filters.year === 'range'
+                    }
+                ];
+
+                Object.keys(yearsList).forEach(key => {
+                    selectItems.push({
+                        title: yearsList[key],
+                        value: key,
+                        selected: filters.year === key
+                    });
+                });
+
+                Lampa.Select.show({
+                    title: 'Год релиза или период',
+                    items: selectItems,
+                    onSelect: (selected) => {
+                        if (selected.value !== 'range') {
+                            filters.year = selected.value;
+                            filters.yearFrom = '';
+                            filters.yearTo = '';
+                            html.find('.filter-year').text(getYearButtonText());
+                            this.resetAndReload();
+                            return;
+                        }
+
+                        Lampa.Input.edit({
+                            title: 'Год ОТ (например: 2026, или пусто)',
+                            value: filters.yearFrom || String(new Date().getFullYear()),
+                            free: true,
+                            nosave: true
+                        }, (fromVal) => {
+                            const cleanFrom = (fromVal || '').replace(/\D/g, '').slice(0, 4);
+
+                            setTimeout(() => {
+                                Lampa.Input.edit({
+                                    title: 'Год ДО (например: 2028, или пусто)',
+                                    value: filters.yearTo || '',
+                                    free: true,
+                                    nosave: true
+                                }, (toVal) => {
+                                    const cleanTo = (toVal || '').replace(/\D/g, '').slice(0, 4);
+
+                                    if (!cleanFrom && !cleanTo) {
+                                        filters.year = 'all';
+                                        filters.yearFrom = '';
+                                        filters.yearTo = '';
+                                    } else {
+                                        filters.year = 'range';
+                                        if (cleanFrom && cleanTo && Number(cleanFrom) > Number(cleanTo)) {
+                                            filters.yearFrom = cleanTo;
+                                            filters.yearTo = cleanFrom;
+                                        } else {
+                                            filters.yearFrom = cleanFrom;
+                                            filters.yearTo = cleanTo;
+                                        }
+                                    }
+
+                                    html.find('.filter-year').text(getYearButtonText());
+                                    this.resetAndReload();
+                                    Lampa.Controller.toggle('content');
+                                });
+                            }, 200);
+                        });
+                    },
+                    onBack: () => {
+                        Lampa.Controller.toggle('content');
+                    }
+                });
+            });
 
             scroll.append(header);
         };
@@ -216,7 +367,7 @@
         this.resetAndReload = function () {
             page = 1;
             items = [];
-            loaded_pages = {};
+            loaded_pages = { 1: true };
             last_focused_index = 0;
             SESSION_CACHE.state = null;
             body.empty();
@@ -259,9 +410,24 @@
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
             if (isNewSeasons) {
-                // Для новых сезонов берем уже стартовавшие ранее сериалы (первый сезон вышел до сегодня),
-                // чтобы отсеять премьеры 1-х сезонов и найти продолжения популярных шоу
                 params.push(`${dateLteKey}=${encodeURIComponent(today)}`);
+                if (filters.year === 'range') {
+                    if (filters.yearFrom) params.push(`${dateGteKey}=${encodeURIComponent(filters.yearFrom + '-01-01')}`);
+                    if (filters.yearTo) params.push(`${dateLteKey}=${encodeURIComponent(filters.yearTo + '-12-31')}`);
+                } else if (filters.year !== 'all') {
+                    params.push(`${dateGteKey}=${encodeURIComponent(filters.year + '-01-01')}`);
+                    params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
+                }
+            } else if (filters.year === 'range') {
+                if (filters.yearFrom) {
+                    const startDate = (filters.yearFrom === today.slice(0, 4)) ? today : `${filters.yearFrom}-01-01`;
+                    params.push(`${dateGteKey}=${encodeURIComponent(startDate)}`);
+                } else {
+                    params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
+                }
+                if (filters.yearTo) {
+                    params.push(`${dateLteKey}=${encodeURIComponent(filters.yearTo + '-12-31')}`);
+                }
             } else if (filters.year === 'all') {
                 params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
             } else {
@@ -294,21 +460,16 @@
             if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
                 this.activity.loader(false);
                 total_pages = cached.totalPages;
-                loaded_pages[currentPage] = true;
                 this.handleResults(cached.results, append, currentPage);
                 return;
             }
 
-            loading = true;
-            network.clear();
             network.timeout(10000);
             network.native(url, (json) => {
-                loading = false;
                 this.activity.loader(false);
 
                 if (json && json.results && json.results.length > 0) {
                     total_pages = json.totalPages || 1;
-                    loaded_pages[currentPage] = true;
                     SESSION_CACHE.data[url] = {
                         results: json.results,
                         totalPages: total_pages,
@@ -320,7 +481,6 @@
                     this.start();
                 }
             }, (error) => {
-                loading = false;
                 this.activity.loader(false);
                 Lampa.Noty.show('Ошибка API Seerr: ' + (error.status || 'Сетевая ошибка'));
                 if (!append) this.start();
@@ -331,6 +491,7 @@
                 }
             });
         };
+
         this.filterResults = function (rawResults) {
             const hideNoPoster = Lampa.Storage.get('seerr_hide_no_poster', true);
             const onlyRu = Lampa.Storage.get('seerr_only_ru', false);
@@ -353,12 +514,27 @@
                     }
 
                     const relDate = el.releaseDate || el.firstAirDate || '';
+                    const relYear = relDate ? relDate.slice(0, 4) : '';
+
                     if (filters.type !== 'tv_upcoming') {
-                        if (filters.year === 'all') {
+                        if (filters.year === 'range') {
+                            if (!relYear) return false;
+                            if (filters.yearFrom && Number(relYear) < Number(filters.yearFrom)) return false;
+                            if (filters.yearTo && Number(relYear) > Number(filters.yearTo)) return false;
+                            if (filters.yearFrom === today.slice(0, 4) && relDate < today) return false;
+                        } else if (filters.year === 'all') {
                             if (relDate && relDate < today) return false;
                         } else {
                             if (!relDate || !relDate.startsWith(filters.year)) return false;
                             if (filters.year === today.slice(0, 4) && relDate < today) return false;
+                        }
+                    } else if (filters.year === 'range' || filters.year !== 'all') {
+                        if (!relYear) return false;
+                        if (filters.year === 'range') {
+                            if (filters.yearFrom && Number(relYear) < Number(filters.yearFrom)) return false;
+                            if (filters.yearTo && Number(relYear) > Number(filters.yearTo)) return false;
+                        } else if (relYear !== filters.year) {
+                            return false;
                         }
                     }
                 } else {
@@ -379,12 +555,9 @@
                 return true;
             });
         };
-
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
 
-            // В режиме "Сериалы: новые сезоны" запрашиваем детали по каждому сериалу (/api/v1/tv/{id}),
-            // чтобы оставить строго те, у которых актуальный/будущий сезон больше 1-го (S2, S3 и т.д.)
             if (filters.type === 'tv_upcoming' && filtered.length > 0) {
                 const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
                 const apiKey = Lampa.Storage.get('seerr_api_key', '');
@@ -396,7 +569,6 @@
                 const checkComplete = () => {
                     checkedCount++;
                     if (checkedCount === filtered.length) {
-                        // Сохраняем исходный порядок карточек
                         const ordered = filtered.filter(el => multiSeasonSeries.includes(el.id));
                         this.applyFilteredResults(ordered, append, currentPage);
                     }
@@ -405,7 +577,6 @@
                 const evaluateDetails = (item, details) => {
                     if (!details || !Array.isArray(details.seasons)) return;
 
-                    // Проверяем, что сериал не закрыт и ждет новые серии/сезоны (и в ленте, и в поиске)
                     const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
                     if (!isOngoing) return;
 
@@ -419,7 +590,6 @@
                         targetSeasonNum = regularSeasons.at(-1).seasonNumber;
                     }
 
-                    // Номер сезона строго больше 1
                     if (targetSeasonNum > 1) {
                         multiSeasonSeries.push(item.id);
                     }
@@ -451,7 +621,6 @@
             this.applyFilteredResults(filtered, append, currentPage);
         };
 
-
         this.applyFilteredResults = function (filtered, append, currentPage) {
             if (!SESSION_CACHE.state || !append) {
                 SESSION_CACHE.state = {
@@ -471,7 +640,7 @@
             if (!append) this.start();
 
             if (items.length < min_cards_buffer && currentPage < total_pages) {
-                setTimeout(() => this.loadNextPage(), 120);
+                this.loadNextPage();
             } else if (items.length === 0 && currentPage >= total_pages) {
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
@@ -535,7 +704,6 @@
                 headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
             });
         };
-
         this.buildCards = function (results) {
             const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
             const showGenres = Lampa.Storage.get('seerr_show_genres', true);
@@ -562,7 +730,6 @@
                     release_year: cardData.release_date ? cardData.release_date.slice(0, 4) : 'Скоро'
                 });
 
-                // 1. Рейтинг (левый верхний угол постера, если включено в настройках и оценка > 0)
                 if (showRating && cardData.vote_average > 0) {
                     const ratingVal = Number(cardData.vote_average).toFixed(1);
                     const ratingColor = ratingVal >= 7 ? '#2ecc71' : (ratingVal >= 5 ? '#f39c12' : '#e74c3c');
@@ -571,7 +738,6 @@
                     );
                 }
 
-                // 2. Жанры под названием карточки (если включено в настройках)
                 if (showGenres && Array.isArray(element.genreIds) && element.genreIds.length > 0) {
                     const genreNames = element.genreIds
                         .map(id => GENRES[id])
@@ -585,7 +751,6 @@
                     }
                 }
 
-                // 3. Статус запроса в Seerr (правый верхний угол)
                 if (element.mediaInfo && element.mediaInfo.status) {
                     const statusMap = {
                         2: { text: 'Запрошено', color: '#e67e22' },
@@ -601,7 +766,6 @@
                     }
                 }
 
-                // 4. Номер сезона и серии для сериалов (левый нижний угол, если включено в настройках)
                 if (showSeasons && mediaMethod === 'tv') {
                     this.fetchTvSeasonInfo(cardData.id, card);
                 }
@@ -663,7 +827,6 @@
                 },
                 down: () => Navigator.move('down'),
                 back: () => {
-                    SESSION_CACHE.state = null;
                     Lampa.Activity.backward();
                 }
             });
@@ -730,7 +893,6 @@
             param: { name: 'seerr_show_rating', type: 'trigger', default: true },
             field: { name: 'Показывать рейтинг', description: 'Выводить оценку TMDB в углу постера (если она уже есть)' }
         });
-
 
         const menuItem = $(`
             <li class="menu__item selector" data-action="${PLUGIN_ID}">
