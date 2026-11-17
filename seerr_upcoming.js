@@ -388,6 +388,43 @@
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
 
+            // Если это поиск в режиме "Новые сезоны", проверяем статус каждого сериала через /api/v1/tv/{id},
+            // чтобы отсеять завершенные шоу (Ended / Canceled)
+            if (filters.search && filters.type === 'tv_upcoming' && filtered.length > 0) {
+                const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
+                const apiKey = Lampa.Storage.get('seerr_api_key', '');
+                let checkedCount = 0;
+                const activeSeries = [];
+
+                filtered.forEach((item) => {
+                    const tvReq = new Lampa.Reguest();
+                    tvReq.native(`${domain}/api/v1/tv/${item.id}`, (details) => {
+                        checkedCount++;
+                        const isOngoing = details && (
+                            details.nextEpisodeToAir ||
+                            ['Returning Series', 'In Production', 'Planned'].includes(details.status)
+                        );
+                        if (isOngoing) activeSeries.push(item);
+
+                        if (checkedCount === filtered.length) {
+                            this.applyFilteredResults(activeSeries, append, currentPage);
+                        }
+                    }, () => {
+                        checkedCount++;
+                        if (checkedCount === filtered.length) {
+                            this.applyFilteredResults(activeSeries, append, currentPage);
+                        }
+                    }, false, {
+                        headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
+                    });
+                });
+                return;
+            }
+
+            this.applyFilteredResults(filtered, append, currentPage);
+        };
+
+        this.applyFilteredResults = function (filtered, append, currentPage) {
             if (!SESSION_CACHE.state || !append) {
                 SESSION_CACHE.state = {
                     filters: Object.assign({}, filters),
@@ -411,6 +448,7 @@
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
+        
         this.buildCards = function (results) {
             const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
 
