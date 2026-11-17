@@ -136,7 +136,7 @@
 
         this.renderHeader = function () {
             const yearsList = getYearsList();
-            const isUpcomingFeed = filters.type === 'tv_upcoming' && !filters.search;
+            const isUpcomingFeed = false;
             const extraDisplay = isUpcomingFeed ? 'none' : 'inline-flex';
             const sortDisplay = (isUpcomingFeed || filters.search) ? 'none' : 'inline-flex';
             const searchLabel = filters.search ? `Поиск: ${filters.search}` : 'Поиск';
@@ -182,18 +182,11 @@
 
         this.updateFilterVisibility = function () {
             const isSearch = Boolean(filters.search);
-            const isUpcomingFeed = filters.type === 'tv_upcoming' && !isSearch;
-
             const extraBtns = html.find('.filter-genre, .filter-year, .filter-lang');
             const sortBtn = html.find('.filter-sort');
 
-            if (isUpcomingFeed) {
-                extraBtns.css('display', 'none');
-                sortBtn.css('display', 'none');
-            } else {
-                extraBtns.css('display', 'inline-flex');
-                sortBtn.css('display', isSearch ? 'none' : 'inline-flex');
-            }
+            extraBtns.css('display', 'inline-flex');
+            sortBtn.css('display', isSearch ? 'none' : 'inline-flex');
         };
 
         this.openSelect = function (title, listObj, filterKey, btnSelector, prefix) {
@@ -235,18 +228,13 @@
         this.buildUrl = function (targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
 
-            // Режим поиска по запросу пользователя
             if (filters.search) {
                 return `${domain}/api/v1/search?query=${encodeURIComponent(filters.search)}&page=${targetPage}`;
             }
 
-            // Лента новых сезонов и серий
-            if (filters.type === 'tv_upcoming') {
-                return `${domain}/api/v1/discover/tv/upcoming?page=${targetPage}`;
-            }
-
             const today = new Date().toISOString().slice(0, 10);
             const isMovie = filters.type === 'movie';
+            const isNewSeasons = filters.type === 'tv_upcoming';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
             let sortValue = filters.sort;
@@ -270,7 +258,11 @@
             const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
-            if (filters.year === 'all') {
+            if (isNewSeasons) {
+                // Для новых сезонов берем уже стартовавшие ранее сериалы (первый сезон вышел до сегодня),
+                // чтобы отсеять премьеры 1-х сезонов и найти продолжения популярных шоу
+                params.push(`${dateLteKey}=${encodeURIComponent(today)}`);
+            } else if (filters.year === 'all') {
                 params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
             } else {
                 const startDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
@@ -413,11 +405,9 @@
                 const evaluateDetails = (item, details) => {
                     if (!details || !Array.isArray(details.seasons)) return;
 
-                    // При поиске дополнительно отсеиваем закрытые сериалы
-                    if (filters.search) {
-                        const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
-                        if (!isOngoing) return;
-                    }
+                    // Проверяем, что сериал не закрыт и ждет новые серии/сезоны (и в ленте, и в поиске)
+                    const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
+                    if (!isOngoing) return;
 
                     const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
                     if (regularSeasons.length === 0) return;
@@ -429,7 +419,7 @@
                         targetSeasonNum = regularSeasons.at(-1).seasonNumber;
                     }
 
-                    // Главное условие: номер сезона строго больше 1
+                    // Номер сезона строго больше 1
                     if (targetSeasonNum > 1) {
                         multiSeasonSeries.push(item.id);
                     }
