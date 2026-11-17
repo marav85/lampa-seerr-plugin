@@ -140,7 +140,7 @@
                 this.start();
             } else {
                 this.activity.loader(true);
-                loaded_pages = true;
+                loaded_pages = { 1: true };
                 this.loadData(false);
             }
 
@@ -375,7 +375,6 @@
             this.activity.loader(true);
             this.loadData(false);
         };
-
         this.buildUrl = function (targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
 
