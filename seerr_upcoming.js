@@ -206,8 +206,9 @@
                 params.push(`language=${encodeURIComponent(filters.lang)}`);
             }
 
-            const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
-            const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
+            // Для сериалов используем airDateGte, чтобы видеть и новые сериалы, и новые сезоны
+            const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'airDateGte';
+            const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'airDateLte';
 
             if (filters.year === 'all') {
                 params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
@@ -285,9 +286,11 @@
             const today = new Date().toISOString().slice(0, 10);
 
             return rawResults.filter((el) => {
-                // 1. Жесткая отсечка старых релизов (защита от бага TMDB с сериалами за январь)
-                const relDate = el.releaseDate || el.firstAirDate || '';
-                if (relDate && relDate < today) return false;
+                // Для фильмов отсекаем прошедшие даты; для сериалов пропускаем (т.к. у новых сезонов firstAirDate в прошлом)
+                if (filters.type === 'movie') {
+                    const relDate = el.releaseDate || '';
+                    if (relDate && relDate < today) return false;
+                }
 
                 // 2. Фильтр: скрывать без постера
                 if (hideNoPoster && !el.posterPath) return false;
