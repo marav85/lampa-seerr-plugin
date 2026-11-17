@@ -41,17 +41,17 @@
     };
 
     const SORTS = {
-        'popularity.desc': 'Популярные (сначала хиты)',
-        'release_date.asc': 'По дате (ближайшие)',
-        'release_date.desc': 'По дате (самые дальние)',
-        'vote_average.desc': 'По рейтингу (высокий)',
-        'vote_count.desc': 'По количеству оценок',
-        'original_title.asc': 'По названию (А-Я)'
+        'popularity.desc': 'Популярные',
+        'release_date.asc': 'Ближайшие',
+        'release_date.desc': 'Дальние',
+        'vote_average.desc': 'По рейтингу',
+        'vote_count.desc': 'По оценкам',
+        'original_title.asc': 'По названию'
     };
 
     function getYearsList() {
         const currentYear = new Date().getFullYear();
-        const years = { all: 'Все годы (будущие)' };
+        const years = { all: 'Все годы' };
         for (let y = currentYear + 3; y >= currentYear; y--) {
             years[y.toString()] = y.toString();
         }
