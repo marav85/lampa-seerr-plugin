@@ -66,7 +66,6 @@
         'vote_count.desc': 'По оценкам',
         'original_title.asc': 'По названию'
     };
-
     function getYearsList() {
         const currentYear = new Date().getFullYear();
         const years = { all: 'Все годы' };
@@ -105,7 +104,8 @@
         let page = 1;
         let total_pages = 1;
         let loaded_pages = {};
-        let min_cards_buffer = 40;
+        let prefetch_pages_target = Number(Lampa.Storage.get('seerr_prefetch_pages', '6'));
+        let max_auto_pages = prefetch_pages_target + 4;
 
         let filters = SESSION_CACHE.state ? Object.assign({}, SESSION_CACHE.state.filters) : {
             type: 'movie',
@@ -118,6 +118,7 @@
             lang: 'all',
             search: ''
         };
+
         this.create = function () {
             this.renderHeader();
             scroll.append(body);
@@ -147,11 +148,23 @@
                 this.start();
             } else {
                 this.activity.loader(true);
-                loaded_pages = { 1: true };
-                this.loadData(false);
+                loaded_pages = { 1: true, 2: true, 3: true };
+                this.loadSpecificPage(1, false);
+                this.loadSpecificPage(2, true);
+                this.loadSpecificPage(3, true);
             }
 
             return this.render();
+        };
+
+        this.prefetchBatch = function (fromPage, toPage) {
+            for (let p = fromPage; p <= toPage; p++) {
+                if (p <= total_pages && !loaded_pages[p]) {
+                    loaded_pages[p] = true;
+                    if (p > page) page = p;
+                    this.loadSpecificPage(p, true);
+                }
+            }
         };
 
         this.loadNextPage = function () {
@@ -160,11 +173,10 @@
                 if (!loaded_pages[nextPage]) {
                     loaded_pages[nextPage] = true;
                     page = nextPage;
-                    this.loadData(true);
+                    this.loadSpecificPage(nextPage, true);
                 }
             }
         };
-
         this.renderHeader = function () {
             const yearsList = getYearsList();
             const isSearch = Boolean(filters.search);
@@ -369,15 +381,17 @@
         };
 
         this.resetAndReload = function () {
-            page = 1;
+            page = 3;
             items = [];
-            loaded_pages = { 1: true };
+            loaded_pages = { 1: true, 2: true, 3: true };
             last_focused_index = 0;
             SESSION_CACHE.state = null;
             body.empty();
             scroll.reset();
             this.activity.loader(true);
-            this.loadData(false);
+            this.loadSpecificPage(1, false);
+            this.loadSpecificPage(2, true);
+            this.loadSpecificPage(3, true);
         };
         this.buildUrl = function (targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
@@ -392,7 +406,6 @@
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
             let sortValue = filters.sort;
-            // Для сортировки "Ближайшая серия" запрашиваем у API популярные, а затем сортируем по точной дате nextEpisodeToAir
             if (sortValue === 'next_episode.asc') {
                 sortValue = 'popularity.desc';
             } else if (sortValue === 'release_date.asc') {
@@ -431,7 +444,6 @@
                         lteDate = `${filters.year}-12-31`;
                     }
                 }
-                // Защита от невозможного диапазона дат (gte > lte), вызывающего 500 в Seerr
                 if (gteDate && lteDate && gteDate > lteDate) {
                     gteDate = '';
                 }
@@ -466,6 +478,10 @@
         };
 
         this.loadData = function (append) {
+            this.loadSpecificPage(page, append);
+        };
+
+        this.loadSpecificPage = function (targetPage, append) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const apiKey = Lampa.Storage.get('seerr_api_key', '');
 
@@ -475,7 +491,7 @@
                 return;
             }
 
-            const currentPage = page;
+            const currentPage = targetPage;
             const url = this.buildUrl(currentPage);
 
             const cached = SESSION_CACHE.data[url];
@@ -486,8 +502,9 @@
                 return;
             }
 
-            network.timeout(10000);
-            network.native(url, (json) => {
+            const req = new Lampa.Reguest();
+            req.timeout(10000);
+            req.native(url, (json) => {
                 this.activity.loader(false);
 
                 if (json && json.results && json.results.length > 0) {
@@ -504,8 +521,10 @@
                 }
             }, (error) => {
                 this.activity.loader(false);
-                Lampa.Noty.show('Ошибка API Seerr: ' + (error.status || 'Сетевая ошибка'));
-                if (!append) this.start();
+                if (!append) {
+                    Lampa.Noty.show('Ошибка API Seerr: ' + (error.status || 'Сетевая ошибка'));
+                    this.start();
+                }
             }, false, {
                 headers: {
                     'X-Api-Key': apiKey,
@@ -522,7 +541,6 @@
             const minRating = filters.rating !== 'all' ? Number(filters.rating) : 0;
 
             return rawResults.filter((el) => {
-                // Фильтр по минимальной оценке
                 if (minRating > 0) {
                     const score = Number(el.voteAverage || 0);
                     if (score < minRating) return false;
@@ -599,17 +617,7 @@
                 const checkComplete = () => {
                     checkedCount++;
                     if (checkedCount === filtered.length) {
-                        let resultList = filtered.filter(el => passedMap[el.id]);
-
-                        // Сортировка по дате ближайшего выхода серии (от самой скорой к более поздним)
-                        if (filters.sort === 'next_episode.asc') {
-                            resultList.sort((a, b) => {
-                                const dateA = a._nextAirDate || '9999-12-31';
-                                const dateB = b._nextAirDate || '9999-12-31';
-                                return dateA.localeCompare(dateB);
-                            });
-                        }
-
+                        const resultList = filtered.filter(el => passedMap[el.id]);
                         this.applyFilteredResults(resultList, append, currentPage);
                     }
                 };
@@ -644,7 +652,6 @@
                         airedEps = totalEps;
                     }
 
-                    // Сохраняем дату ближайшей серии для сортировки
                     if (details.nextEpisodeToAir && details.nextEpisodeToAir.airDate) {
                         item._nextAirDate = details.nextEpisodeToAir.airDate;
                     } else if (seasonObj.airDate && seasonObj.airDate >= today) {
@@ -657,14 +664,8 @@
                         const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
                         if (!isOngoing) return;
                         if (targetSeasonNum <= 1) return;
-
-                        // 1. Отсекаем сезоны, где все серии уже вышли (например, "20 из 20")
                         if (totalEps > 0 && airedEps >= totalEps) return;
-
-                        // 2. Если выбрана сортировка "Ближайшая серия", отсекаем пустые заглушки ("0 сер.") без даты выхода
-                        if (filters.sort === 'next_episode.asc' && item._nextAirDate === '9999-12-31') {
-                            return;
-                        }
+                        if (filters.sort === 'next_episode.asc' && item._nextAirDate === '9999-12-31') return;
 
                         passedMap[item.id] = true;
                     } else {
@@ -697,9 +698,8 @@
 
             this.applyFilteredResults(filtered, append, currentPage);
         };
-
         this.applyFilteredResults = function (filtered, append, currentPage) {
-            if (!SESSION_CACHE.state || !append) {
+            if (!SESSION_CACHE.state) {
                 SESSION_CACHE.state = {
                     filters: Object.assign({}, filters),
                     page: currentPage,
@@ -709,9 +709,15 @@
                     itemsData: []
                 };
             }
-            SESSION_CACHE.state.page = currentPage;
+            if (currentPage > SESSION_CACHE.state.page) {
+                SESSION_CACHE.state.page = currentPage;
+            }
             SESSION_CACHE.state.loaded_pages = Object.assign({}, loaded_pages);
-            SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(filtered);
+
+            // Защита от дублей при параллельной загрузке страниц
+            const existingIds = new Set(SESSION_CACHE.state.itemsData.map(x => x.id));
+            const uniqueNew = filtered.filter(x => !existingIds.has(x.id));
+            SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(uniqueNew);
 
             if (filters.sort === 'next_episode.asc' && SESSION_CACHE.state.itemsData.length > 1) {
                 SESSION_CACHE.state.itemsData.sort((a, b) => {
@@ -723,14 +729,19 @@
                 body.empty();
                 this.buildCards(SESSION_CACHE.state.itemsData);
             } else {
-                this.buildCards(filtered);
+                this.buildCards(uniqueNew);
             }
 
-            if (!append) this.start();
+            if (!append) {
+                this.start();
+                if (prefetch_pages_target > 3 && total_pages > 3) {
+                    this.prefetchBatch(4, Math.min(prefetch_pages_target, total_pages));
+                }
+            }
 
-            if (items.length < min_cards_buffer && currentPage < total_pages) {
+            if (items.length < 25 && page < Math.min(max_auto_pages, total_pages)) {
                 this.loadNextPage();
-            } else if (items.length === 0 && currentPage >= total_pages) {
+            } else if (items.length === 0 && page >= total_pages) {
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
@@ -793,7 +804,6 @@
                 headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
             });
         };
-
         this.buildCards = function (results) {
             const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
             const showGenres = Lampa.Storage.get('seerr_show_genres', true);
@@ -875,7 +885,7 @@
                     if (SESSION_CACHE.state) SESSION_CACHE.state.last_focused_index = currentIndex;
                     scroll.update(card, true);
 
-                    if (items.length - currentIndex <= 15) {
+                    if (items.length - currentIndex <= 30) {
                         this.loadNextPage();
                     }
                 });
@@ -897,6 +907,7 @@
 
             if (active) Lampa.Controller.collectionSet(scroll.render());
         };
+
         this.start = function () {
             active = true;
             Lampa.Controller.add('content', {
@@ -951,6 +962,17 @@
             component: PLUGIN_ID,
             param: { name: 'seerr_api_key', type: 'input', values: '', default: '' },
             field: { name: 'API Key', description: 'Ключ из настроек Seerr (Settings -> General -> API Key)' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: {
+                name: 'seerr_prefetch_pages',
+                type: 'select',
+                values: { '3': '3 страницы (60 тайтлов)', '6': '6 страниц (120 тайтлов)', '9': '9 страниц (180 тайтлов)' },
+                default: '6'
+            },
+            field: { name: 'Глубина предзагрузки буфера', description: 'Сколько страниц загружать сразу при выборе фильтра' }
         });
 
         Lampa.SettingsApi.addParam({
