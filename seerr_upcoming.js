@@ -233,10 +233,9 @@
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
             if (filters.year === 'all') {
-                const defaultFrom = isMovie ? today : `${today.slice(0, 4)}-01-01`;
-                params.push(`${dateGteKey}=${encodeURIComponent(defaultFrom)}`);
+                params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
             } else {
-                const startDate = (isMovie && filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
+                const startDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
                 params.push(`${dateGteKey}=${encodeURIComponent(startDate)}`);
                 params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
             }
@@ -317,8 +316,8 @@
                 // Скрывать без постера
                 if (hideNoPoster && !el.posterPath) return false;
 
-                // Только с русским названием или описанием
-                if (onlyRu) {
+                // Только с русским названием или описанием (не применяем для ленты новых сезонов, чтобы не резать выдачу)
+                if (onlyRu && filters.type !== 'tv_upcoming') {
                     const title = el.title || el.name || '';
                     const overview = el.overview || '';
                     if (!hasCyrillic(title) && !hasCyrillic(overview)) return false;
