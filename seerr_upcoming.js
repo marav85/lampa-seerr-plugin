@@ -193,7 +193,6 @@
                 }
                 
                 // Пересчитываем высоту области прокрутки
-                scroll.update();
                 if (!append) this.start();
             }, (error) => {
                 loading = false;
