@@ -15,6 +15,12 @@
 
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
 
+    const TYPES = {
+        movie: 'Фильмы',
+        tv: 'Сериалы (новые)',
+        tv_upcoming: 'Сериалы: новые сезоны'
+    };
+
     const GENRES = {
         all: 'Все жанры', 28: 'Боевик', 12: 'Приключения', 16: 'Мультфильм',
         35: 'Комедия', 80: 'Криминал', 99: 'Документальный', 18: 'Драма',
@@ -69,7 +75,7 @@
         let total_pages = 1;
         let loading = false;
         let loaded_pages = {};
-        let min_cards_buffer = 40; // Держим минимум 40 отфильтрованных карточек в буфере
+        let min_cards_buffer = 40;
 
         let filters = SESSION_CACHE.state ? Object.assign({}, SESSION_CACHE.state.filters) : {
             type: 'movie',
@@ -125,27 +131,36 @@
         };
         this.renderHeader = function () {
             const yearsList = getYearsList();
+            const isUpcomingFeed = filters.type === 'tv_upcoming';
+            const extraDisplay = isUpcomingFeed ? 'none' : 'block';
+
             const header = $(`
                 <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; gap: 1em; flex-wrap: wrap;">
-                    <div class="simple-button selector filter-type">Тип: ${filters.type === 'movie' ? 'Фильмы' : 'Сериалы'}</div>
-                    <div class="simple-button selector filter-genre">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
-                    <div class="simple-button selector filter-year">Год: ${yearsList[filters.year] || 'Все годы'}</div>
-                    <div class="simple-button selector filter-sort">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
-                    <div class="simple-button selector filter-lang">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
+                    <div class="simple-button selector filter-type">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
+                    <div class="simple-button selector filter-genre" style="display: ${extraDisplay};">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
+                    <div class="simple-button selector filter-year" style="display: ${extraDisplay};">Год: ${yearsList[filters.year] || 'Все годы'}</div>
+                    <div class="simple-button selector filter-sort" style="display: ${extraDisplay};">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
+                    <div class="simple-button selector filter-lang" style="display: ${extraDisplay};">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
             `);
 
-            header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', {
-                movie: 'Фильмы',
-                tv: 'Сериалы'
-            }, 'type', '.filter-type', 'Тип: '));
-
+            header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', TYPES, 'type', '.filter-type', 'Тип: '));
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
             header.find('.filter-year').on('hover:enter', () => this.openSelect('Год релиза', yearsList, 'year', '.filter-year', 'Год: '));
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', SORTS, 'sort', '.filter-sort', 'Сортировка: '));
             header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', LANGS, 'lang', '.filter-lang', 'Язык: '));
 
             scroll.append(header);
+        };
+
+        this.updateFilterVisibility = function () {
+            const isUpcomingFeed = filters.type === 'tv_upcoming';
+            const extraBtns = html.find('.filter-genre, .filter-year, .filter-sort, .filter-lang');
+            if (isUpcomingFeed) {
+                extraBtns.hide();
+            } else {
+                extraBtns.show();
+            }
         };
 
         this.openSelect = function (title, listObj, filterKey, btnSelector, prefix) {
@@ -161,6 +176,9 @@
                 onSelect: (selected) => {
                     filters[filterKey] = selected.value;
                     html.find(btnSelector).text(prefix + selected.title);
+                    if (filterKey === 'type') {
+                        this.updateFilterVisibility();
+                    }
                     this.resetAndReload();
                 },
                 onBack: () => {
@@ -183,11 +201,16 @@
 
         this.buildUrl = function (targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
+
+            // Отдельный эндпоинт для новых сезонов и серий уже идущих сериалов
+            if (filters.type === 'tv_upcoming') {
+                return `${domain}/api/v1/discover/tv/upcoming?page=${targetPage}`;
+            }
+
             const today = new Date().toISOString().slice(0, 10);
             const isMovie = filters.type === 'movie';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
-            // Маппинг сортировки отдельно для фильмов и сериалов
             let sortValue = filters.sort;
             if (sortValue === 'release_date.asc') {
                 sortValue = isMovie ? 'primary_release_date.asc' : 'first_air_date.asc';
@@ -210,8 +233,6 @@
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
             if (filters.year === 'all') {
-                // Для фильмов берем строго от сегодня; для сериалов — с начала текущего года,
-                // чтобы захватывать анонсы без точного дня релиза
                 const defaultFrom = isMovie ? today : `${today.slice(0, 4)}-01-01`;
                 params.push(`${dateGteKey}=${encodeURIComponent(defaultFrom)}`);
             } else {
@@ -287,16 +308,16 @@
             const today = new Date().toISOString().slice(0, 10);
 
             return rawResults.filter((el) => {
-                // Для фильмов отсекаем прошедшие даты; для сериалов пропускаем (т.к. у новых сезонов firstAirDate в прошлом)
+                // Для фильмов отсекаем прошедшие даты
                 if (filters.type === 'movie') {
                     const relDate = el.releaseDate || '';
                     if (relDate && relDate < today) return false;
                 }
 
-                // 2. Фильтр: скрывать без постера
+                // Скрывать без постера
                 if (hideNoPoster && !el.posterPath) return false;
 
-                // 3. Фильтр: только с русским названием или описанием
+                // Только с русским названием или описанием
                 if (onlyRu) {
                     const title = el.title || el.name || '';
                     const overview = el.overview || '';
@@ -327,7 +348,6 @@
             this.buildCards(filtered);
             if (!append) this.start();
 
-            // Докачиваем страницы в буфер, пока не наберется минимум 40 подходящих карточек
             if (items.length < min_cards_buffer && currentPage < total_pages) {
                 setTimeout(() => this.loadNextPage(), 120);
             } else if (items.length === 0 && currentPage >= total_pages) {
@@ -336,6 +356,9 @@
         };
 
         this.buildCards = function (results) {
+            // Приводим тип карточки для Lampa (для tv_upcoming метод тоже 'tv')
+            const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
+
             results.forEach((element) => {
                 const currentIndex = items.length;
                 const cardData = {
@@ -348,7 +371,7 @@
                     vote_average: element.voteAverage || 0,
                     overview: element.overview,
                     source: 'tmdb',
-                    media_type: filters.type
+                    media_type: mediaMethod
                 };
 
                 const card = Lampa.Template.get('card', {
@@ -396,7 +419,7 @@
                         url: '',
                         component: 'full',
                         id: cardData.id,
-                        method: filters.type,
+                        method: mediaMethod,
                         card: cardData,
                         source: 'tmdb'
                     });
