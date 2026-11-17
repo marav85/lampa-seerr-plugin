@@ -199,19 +199,65 @@
                 let currentVal = filters.search || '';
                 const history = getSearchHistory();
 
+                const clockSvg = `<svg style="width: 1.1em; height: 1.1em; margin-right: 0.45em; opacity: 0.7; flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
+                const searchSvg = `<svg style="width: 1.2em; height: 1.2em; margin-right: 0.6em; opacity: 0.8; flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+
                 const modalBody = $(`
-                    <div class="seerr-search-modal" style="padding: 1em;">
-                        <div style="display: flex; gap: 0.8em; align-items: center; margin-bottom: 1.2em;">
-                            <div class="simple-button selector seerr-input-box" style="flex: 1; text-align: left; background: rgba(255,255,255,0.12); min-height: 2.6em; display: flex; align-items: center; padding: 0 1em;">
-                                ${currentVal || '<span style="opacity: 0.5;">Нажмите, чтобы ввести текст...</span>'}
+                    <div class="seerr-native-search" style="padding: 0.5em 0.5em 1.5em 0.5em;">
+                        <div style="display: flex; align-items: center; gap: 0.8em; margin-bottom: 1em;">
+                            <div class="simple-button selector seerr-input-box" style="flex: 1; margin: 0; height: 3em; display: flex; align-items: center; justify-content: flex-start; padding: 0 1em; background: rgba(255,255,255,0.08); border-radius: 0.4em; font-size: 1.15em;">
+                                ${searchSvg}
+                                <span class="seerr-input-text">${currentVal || '<span style="opacity: 0.45;">Введите текст...</span>'}</span>
                             </div>
-                            <div class="simple-button selector seerr-btn-submit" style="margin: 0;">Найти</div>
-                            ${currentVal ? '<div class="simple-button selector seerr-btn-clear" style="margin: 0;">Сброс</div>' : ''}
+                            ${currentVal ? '<div class="simple-button selector seerr-btn-clear" style="margin: 0; height: 3em; display: inline-flex; align-items: center; padding: 0 1.2em;">Сбросить</div>' : ''}
                         </div>
-                        ${history.length > 0 ? '<div style="font-size: 0.85em; opacity: 0.6; margin-bottom: 0.6em;">Последние запросы:</div>' : ''}
-                        <div class="seerr-history-list" style="display: flex; flex-direction: column; gap: 0.5em;"></div>
+                        <div class="seerr-history-chips" style="display: flex; flex-wrap: wrap; gap: 0.6em; margin-bottom: 1.5em;"></div>
+                        <div style="font-size: 0.9em; opacity: 0.45;">Нажмите на строку выше для ввода текста или выберите запрос из истории.</div>
                     </div>
                 `);
+
+                const chipsContainer = modalBody.find('.seerr-history-chips');
+                history.forEach(term => {
+                    const chip = $(`
+                        <div class="simple-button selector" style="margin: 0; display: inline-flex; align-items: center; padding: 0.55em 1em; background: rgba(255,255,255,0.07); border-radius: 0.35em; font-size: 0.95em;">
+                            ${clockSvg}
+                            <span>${term}</span>
+                        </div>
+                    `);
+                    chip.on('hover:enter', () => {
+                        Lampa.Modal.close();
+                        applySearchQuery(term);
+                    });
+                    chipsContainer.append(chip);
+                });
+
+                modalBody.find('.seerr-input-box').on('hover:enter', () => {
+                    Lampa.Modal.close();
+                    Lampa.Input.edit({
+                        title: 'Поиск',
+                        value: currentVal,
+                        free: true,
+                        nosave: true
+                    }, (newValue) => {
+                        applySearchQuery(newValue);
+                    });
+                });
+
+                modalBody.find('.seerr-btn-clear').on('hover:enter', () => {
+                    Lampa.Modal.close();
+                    applySearchQuery('');
+                });
+
+                Lampa.Modal.open({
+                    title: 'Поиск',
+                    html: modalBody,
+                    size: 'large',
+                    onBack: () => {
+                        Lampa.Modal.close();
+                        Lampa.Controller.toggle('content');
+                    }
+                });
+            };
 
                 const historyContainer = modalBody.find('.seerr-history-list');
                 history.forEach(term => {
