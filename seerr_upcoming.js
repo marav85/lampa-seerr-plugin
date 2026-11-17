@@ -7,6 +7,12 @@
     const PLUGIN_NAME = 'Seerr Upcoming';
     const PLUGIN_ID = 'seerr_upcoming';
 
+    const SESSION_CACHE = {
+        data: {},
+        state: null
+    };
+    const CACHE_TTL = 10 * 60 * 1000;
+
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
 
     const GENRES = {
@@ -15,6 +21,20 @@
         10751: 'Семейный', 14: 'Фэнтези', 36: 'История', 27: 'Ужасы',
         10402: 'Музыка', 9648: 'Детектив', 10749: 'Мелодрама', 878: 'Фантастика',
         53: 'Триллер', 10752: 'Военный', 37: 'Вестерн'
+    };
+
+    const LANGS = {
+        all: 'Все страны',
+        en: 'США / Британия (EN)',
+        ru: 'Россия (RU)',
+        ko: 'Корея (KO)',
+        ja: 'Япония (JA)'
+    };
+
+    const SORTS = {
+        'popularity.desc': 'Популярные',
+        'release_date.asc': 'По дате (ближайшие)',
+        'vote_average.desc': 'По рейтингу'
     };
 
     function getYearsList() {
@@ -34,12 +54,14 @@
         
         let items = [];
         let active = false;
-        let last_focused;
+        let last_focused_index = 0;
         let page = 1;
         let total_pages = 1;
         let loading = false;
+        let loaded_pages = {};
+        let initial_prefetch_target = 3;
 
-        let filters = {
+        let filters = SESSION_CACHE.state ? Object.assign({}, SESSION_CACHE.state.filters) : {
             type: 'movie',
             genre: 'all',
             year: 'all',
@@ -48,32 +70,58 @@
         };
 
         this.create = function () {
-            this.activity.loader(true);
             this.renderHeader();
             scroll.append(body);
             html.append(scroll.render());
-
             scroll.minus();
 
-            scroll.onEnd = () => {
-                if (!loading && page < total_pages) {
-                    page++;
-                    this.loadData(true);
+            scroll.onScroll = (y) => {
+                const el = scroll.render().get(0);
+                if (el) {
+                    const maxScroll = el.scrollHeight - el.clientHeight;
+                    if (maxScroll > 0 && (maxScroll - y) < 800) {
+                        this.loadNextPage();
+                    }
                 }
             };
 
-            this.loadData(false);
+            scroll.onEnd = () => {
+                this.loadNextPage();
+            };
+
+            if (SESSION_CACHE.state && SESSION_CACHE.state.itemsData.length > 0) {
+                page = SESSION_CACHE.state.page;
+                total_pages = SESSION_CACHE.state.total_pages;
+                last_focused_index = SESSION_CACHE.state.last_focused_index || 0;
+                loaded_pages = Object.assign({}, SESSION_CACHE.state.loaded_pages || {});
+                this.buildCards(SESSION_CACHE.state.itemsData);
+                this.start();
+            } else {
+                this.activity.loader(true);
+                this.loadData(false);
+            }
+
             return this.render();
         };
 
+        this.loadNextPage = function () {
+            if (!loading && page < total_pages) {
+                const nextPage = page + 1;
+                if (!loaded_pages[nextPage]) {
+                    page = nextPage;
+                    this.loadData(true);
+                }
+            }
+        };
         this.renderHeader = function () {
+            const yearsList = getYearsList();
             const header = $(`
                 <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; gap: 1em; flex-wrap: wrap;">
-                    <div class="simple-button selector filter-type">Тип: Фильмы</div>
-                    <div class="simple-button selector filter-genre">Жанр: Все жанры</div>
-                    <div class="simple-button selector filter-year">Год: Все годы</div>
-                    <div class="simple-button selector filter-sort">Сортировка: Популярные</div>
-                    <div class="simple-button selector filter-lang">Язык: Все страны</div>
+                    <div class="simple-button selector filter-type">Тип: ${filters.type === 'movie' ? 'Фильмы' : 'Сериалы'}</div>
+                    <div class="simple-button selector filter-genre">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
+                    <div class="simple-button selector filter-year">Год: ${yearsList[filters.year] || 'Все годы'}</div>
+                    <div class="simple-button selector filter-sort">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
+                    <div class="simple-button selector filter-lang">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
             `);
 
@@ -83,23 +131,10 @@
             }, 'type', '.filter-type', 'Тип: '));
 
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
-            header.find('.filter-year').on('hover:enter', () => this.openSelect('Год релиза', getYearsList(), 'year', '.filter-year', 'Год: '));
-            
-            header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', {
-                'popularity.desc': 'Популярные',
-                'release_date.asc': 'По дате (сначала ближайшие)',
-                'vote_average.desc': 'По рейтингу'
-            }, 'sort', '.filter-sort', 'Сортировка: '));
+            header.find('.filter-year').on('hover:enter', () => this.openSelect('Год релиза', yearsList, 'year', '.filter-year', 'Год: '));
+            header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', SORTS, 'sort', '.filter-sort', 'Сортировка: '));
+            header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', LANGS, 'lang', '.filter-lang', 'Язык: '));
 
-            header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', {
-                all: 'Все страны',
-                en: 'США / Великобритания (EN)',
-                ru: 'Россия (RU)',
-                ko: 'Корея (KO)',
-                ja: 'Япония (JA)'
-            }, 'lang', '.filter-lang', 'Язык: '));
-
-            // Добавляем панель фильтров внутрь скролла, чтобы страница корректно прокручивалась
             scroll.append(header);
         };
 
@@ -127,23 +162,17 @@
         this.resetAndReload = function () {
             page = 1;
             items = [];
-            last_focused = null;
+            loaded_pages = {};
+            last_focused_index = 0;
+            SESSION_CACHE.state = null;
             body.empty();
             scroll.reset();
             this.activity.loader(true);
             this.loadData(false);
         };
-        this.loadData = function (append) {
+
+        this.buildUrl = function (targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
-            const apiKey = Lampa.Storage.get('seerr_api_key', '');
-
-            if (!domain || !apiKey) {
-                this.activity.loader(false);
-                Lampa.Noty.show('Укажите URL сервера и API Key в настройках Lampa -> Seerr');
-                return;
-            }
-
-            loading = true;
             const today = new Date().toISOString().slice(0, 10);
             const isMovie = filters.type === 'movie';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
@@ -154,11 +183,10 @@
             }
 
             let params = [
-                `page=${page}`,
+                `page=${targetPage}`,
                 `sortBy=${encodeURIComponent(sortValue)}`
             ];
 
-            // Добавляем фильтр языка оригинала только если он выбран пользователем
             if (filters.lang !== 'all') {
                 params.push(`language=${encodeURIComponent(filters.lang)}`);
             }
@@ -177,8 +205,32 @@
                 params.push(`genre=${encodeURIComponent(filters.genre)}`);
             }
 
-            const url = `${domain}${endpoint}?${params.join('&')}`;
+            return `${domain}${endpoint}?${params.join('&')}`;
+        };
 
+        this.loadData = function (append) {
+            const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
+            const apiKey = Lampa.Storage.get('seerr_api_key', '');
+
+            if (!domain || !apiKey) {
+                this.activity.loader(false);
+                Lampa.Noty.show('Укажите URL сервера и API Key в настройках Lampa -> Seerr');
+                return;
+            }
+
+            const currentPage = page;
+            const url = this.buildUrl(currentPage);
+
+            const cached = SESSION_CACHE.data[url];
+            if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+                this.activity.loader(false);
+                total_pages = cached.totalPages;
+                loaded_pages[currentPage] = true;
+                this.handleResults(cached.results, append, currentPage);
+                return;
+            }
+
+            loading = true;
             network.clear();
             network.timeout(10000);
             network.native(url, (json) => {
@@ -187,18 +239,21 @@
 
                 if (json && json.results && json.results.length > 0) {
                     total_pages = json.totalPages || 1;
-                    this.buildCards(json.results);
+                    loaded_pages[currentPage] = true;
+                    SESSION_CACHE.data[url] = {
+                        results: json.results,
+                        totalPages: total_pages,
+                        timestamp: Date.now()
+                    };
+                    this.handleResults(json.results, append, currentPage);
                 } else if (!append) {
                     body.append('<div class="empty__title" style="padding: 2em;">Ничего не найдено</div>');
+                    this.start();
                 }
-                
-                // Пересчитываем высоту области прокрутки
-                if (!append) this.start();
             }, (error) => {
                 loading = false;
                 this.activity.loader(false);
                 Lampa.Noty.show('Ошибка API Seerr: ' + (error.status || 'Сетевая ошибка'));
-                console.error('[Seerr Plugin Error]', url, error);
                 if (!append) this.start();
             }, false, {
                 headers: {
@@ -207,9 +262,32 @@
                 }
             });
         };
+        this.handleResults = function (results, append, currentPage) {
+            if (!SESSION_CACHE.state || !append) {
+                SESSION_CACHE.state = {
+                    filters: Object.assign({}, filters),
+                    page: currentPage,
+                    total_pages: total_pages,
+                    last_focused_index: 0,
+                    loaded_pages: Object.assign({}, loaded_pages),
+                    itemsData: []
+                };
+            }
+            SESSION_CACHE.state.page = currentPage;
+            SESSION_CACHE.state.loaded_pages = Object.assign({}, loaded_pages);
+            SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(results);
+
+            this.buildCards(results);
+            if (!append) this.start();
+
+            if (currentPage < initial_prefetch_target && currentPage < total_pages) {
+                setTimeout(() => this.loadNextPage(), 150);
+            }
+        };
 
         this.buildCards = function (results) {
-            results.forEach(element => {
+            results.forEach((element) => {
+                const currentIndex = items.length;
                 const cardData = {
                     id: element.id,
                     title: element.title || element.name,
@@ -245,14 +323,22 @@
 
                 const img = card.find('.card__img');
                 if (cardData.poster_path) {
-                    img.attr('src', Lampa.TMDB.image('t/p/w300' + cardData.poster_path));
+                    const posterUrl = Lampa.TMDB.image('t/p/w300' + cardData.poster_path);
+                    img.attr('src', posterUrl);
+                    const preloader = new Image();
+                    preloader.src = posterUrl;
                 } else {
                     img.attr('src', './img/img_broken.svg');
                 }
 
-                card.on('hover:focus', (e) => {
-                    last_focused = e.target;
+                card.on('hover:focus', () => {
+                    last_focused_index = currentIndex;
+                    if (SESSION_CACHE.state) SESSION_CACHE.state.last_focused_index = currentIndex;
                     scroll.update(card, true);
+
+                    if (items.length - currentIndex <= 15) {
+                        this.loadNextPage();
+                    }
                 });
 
                 card.on('hover:enter', () => {
@@ -278,7 +364,8 @@
             Lampa.Controller.add('content', {
                 toggle: () => {
                     Lampa.Controller.collectionSet(scroll.render());
-                    Lampa.Controller.collectionFocus(last_focused || false, scroll.render());
+                    const targetCard = items.at(last_focused_index) || false;
+                    Lampa.Controller.collectionFocus(targetCard, scroll.render());
                 },
                 left: () => {
                     if (Navigator.canmove('left')) Navigator.move('left');
@@ -290,7 +377,10 @@
                     else Lampa.Controller.toggle('head');
                 },
                 down: () => Navigator.move('down'),
-                back: () => Lampa.Activity.backward()
+                back: () => {
+                    SESSION_CACHE.state = null;
+                    Lampa.Activity.backward();
+                }
             });
             Lampa.Controller.toggle('content');
         };
@@ -334,6 +424,7 @@
         `);
 
         menuItem.on('hover:enter', () => {
+            SESSION_CACHE.state = null;
             Lampa.Activity.push({ url: '', title: PLUGIN_NAME, component: PLUGIN_ID, page: 1 });
         });
 
