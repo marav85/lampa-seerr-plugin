@@ -130,21 +130,26 @@
                 }
             }
         };
+
         this.renderHeader = function () {
             const yearsList = getYearsList();
             const isUpcomingFeed = filters.type === 'tv_upcoming' && !filters.search;
-            const extraDisplay = isUpcomingFeed ? 'none' : 'block';
-            const sortDisplay = (isUpcomingFeed || filters.search) ? 'none' : 'block';
+            const extraDisplay = isUpcomingFeed ? 'none' : 'inline-flex';
+            const sortDisplay = (isUpcomingFeed || filters.search) ? 'none' : 'inline-flex';
             const searchLabel = filters.search ? `Поиск: ${filters.search}` : 'Поиск';
 
+            const btnStyle = 'margin: 0; display: inline-flex; align-items: center;';
+            const extraStyle = `margin: 0; display: ${extraDisplay}; align-items: center;`;
+            const sortStyle = `margin: 0; display: ${sortDisplay}; align-items: center;`;
+
             const header = $(`
-                <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; gap: 1em; flex-wrap: wrap;">
-                    <div class="simple-button selector filter-search">${searchLabel}</div>
-                    <div class="simple-button selector filter-type">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
-                    <div class="simple-button selector filter-genre" style="display: ${extraDisplay};">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
-                    <div class="simple-button selector filter-year" style="display: ${extraDisplay};">Год: ${yearsList[filters.year] || 'Все годы'}</div>
-                    <div class="simple-button selector filter-sort" style="display: ${sortDisplay};">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
-                    <div class="simple-button selector filter-lang" style="display: ${extraDisplay};">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
+                <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; align-items: center; gap: 0.8em; flex-wrap: wrap;">
+                    <div class="simple-button selector filter-search" style="${btnStyle}">${searchLabel}</div>
+                    <div class="simple-button selector filter-type" style="${btnStyle}">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
+                    <div class="simple-button selector filter-genre" style="${extraStyle}">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
+                    <div class="simple-button selector filter-year" style="${extraStyle}">Год: ${yearsList[filters.year] || 'Все годы'}</div>
+                    <div class="simple-button selector filter-sort" style="${sortStyle}">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
+                    <div class="simple-button selector filter-lang" style="${extraStyle}">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
             `);
 
@@ -180,12 +185,11 @@
             const sortBtn = html.find('.filter-sort');
 
             if (isUpcomingFeed) {
-                extraBtns.hide();
-                sortBtn.hide();
+                extraBtns.css('display', 'none');
+                sortBtn.css('display', 'none');
             } else {
-                extraBtns.show();
-                if (isSearch) sortBtn.hide();
-                else sortBtn.show();
+                extraBtns.css('display', 'inline-flex');
+                sortBtn.css('display', isSearch ? 'none' : 'inline-flex');
             }
         };
 
