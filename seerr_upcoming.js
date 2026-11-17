@@ -47,10 +47,21 @@
         es: 'Испания (ES)'
     };
 
+    const RATINGS = {
+        all: 'Все оценки',
+        '5': 'От 5.0+',
+        '6': 'От 6.0+',
+        '7': 'От 7.0+',
+        '7.5': 'От 7.5+',
+        '8': 'От 8.0+',
+        '8.5': 'От 8.5+'
+    };
+
     const SORTS = {
         'popularity.desc': 'Популярные',
-        'release_date.asc': 'Ближайшие',
-        'release_date.desc': 'Дальние',
+        'next_episode.asc': 'Ближайшая серия',
+        'release_date.asc': 'Ближайший релиз',
+        'release_date.desc': 'Дальний релиз',
         'vote_average.desc': 'По рейтингу',
         'vote_count.desc': 'По оценкам',
         'original_title.asc': 'По названию'
@@ -102,6 +113,7 @@
             year: 'all',
             yearFrom: '',
             yearTo: '',
+            rating: 'all',
             sort: 'popularity.desc',
             lang: 'all',
             search: ''
@@ -172,11 +184,12 @@
             const sortStyle = `margin: 0; display: ${sortDisplay}; align-items: center;`;
 
             const header = $(`
-                <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; align-items: center; gap: 0.8em; flex-wrap: wrap;">
+                <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; align-items: center; gap: 0.7em; flex-wrap: wrap;">
                     <div class="simple-button selector filter-search" style="${btnStyle}">${searchLabel}</div>
                     <div class="simple-button selector filter-type" style="${btnStyle}">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
                     <div class="simple-button selector filter-genre" style="${btnStyle}">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
                     <div class="simple-button selector filter-year" style="${btnStyle}">${getYearButtonText()}</div>
+                    <div class="simple-button selector filter-rating" style="${btnStyle}">Оценка: ${RATINGS[filters.rating] || 'Все оценки'}</div>
                     <div class="simple-button selector filter-sort" style="${sortStyle}">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
                     <div class="simple-button selector filter-lang" style="${btnStyle}">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
@@ -257,6 +270,7 @@
             header.find('.filter-search').on('hover:enter', openSearchModal);
             header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', TYPES, 'type', '.filter-type', 'Тип: '));
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
+            header.find('.filter-rating').on('hover:enter', () => this.openSelect('Минимальная оценка', RATINGS, 'rating', '.filter-rating', 'Оценка: '));
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', SORTS, 'sort', '.filter-sort', 'Сортировка: '));
             header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', LANGS, 'lang', '.filter-lang', 'Язык: '));
 
@@ -328,7 +342,7 @@
 
         this.updateFilterVisibility = function () {
             const isSearch = Boolean(filters.search);
-            html.find('.filter-genre, .filter-year, .filter-lang').css('display', 'inline-flex');
+            html.find('.filter-genre, .filter-year, .filter-rating, .filter-lang').css('display', 'inline-flex');
             html.find('.filter-sort').css('display', isSearch ? 'none' : 'inline-flex');
         };
 
@@ -378,7 +392,10 @@
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
             let sortValue = filters.sort;
-            if (sortValue === 'release_date.asc') {
+            // Для сортировки "Ближайшая серия" запрашиваем у API популярные, а затем сортируем по точной дате nextEpisodeToAir
+            if (sortValue === 'next_episode.asc') {
+                sortValue = 'popularity.desc';
+            } else if (sortValue === 'release_date.asc') {
                 sortValue = isMovie ? 'primary_release_date.asc' : 'first_air_date.asc';
             } else if (sortValue === 'release_date.desc') {
                 sortValue = isMovie ? 'primary_release_date.desc' : 'first_air_date.desc';
@@ -414,6 +431,10 @@
                         lteDate = `${filters.year}-12-31`;
                     }
                 }
+                // Защита от невозможного диапазона дат (gte > lte), вызывающего 500 в Seerr
+                if (gteDate && lteDate && gteDate > lteDate) {
+                    gteDate = '';
+                }
             } else if (filters.year === 'range') {
                 if (filters.yearFrom) {
                     gteDate = (filters.yearFrom === today.slice(0, 4)) ? today : `${filters.yearFrom}-01-01`;
@@ -423,11 +444,15 @@
                 if (filters.yearTo) {
                     lteDate = `${filters.yearTo}-12-31`;
                 }
+                if (gteDate && lteDate && gteDate > lteDate) {
+                    lteDate = '';
+                }
             } else if (filters.year === 'all') {
                 gteDate = today;
             } else {
                 gteDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
                 lteDate = `${filters.year}-12-31`;
+                if (gteDate > lteDate) lteDate = '';
             }
 
             if (gteDate) params.push(`${dateGteKey}=${encodeURIComponent(gteDate)}`);
@@ -494,8 +519,15 @@
             const today = new Date().toISOString().slice(0, 10);
             const isSearch = Boolean(filters.search);
             const expectedMediaType = filters.type === 'movie' ? 'movie' : 'tv';
+            const minRating = filters.rating !== 'all' ? Number(filters.rating) : 0;
 
             return rawResults.filter((el) => {
+                // Фильтр по минимальной оценке
+                if (minRating > 0) {
+                    const score = Number(el.voteAverage || 0);
+                    if (score < minRating) return false;
+                }
+
                 if (isSearch) {
                     if (el.mediaType && el.mediaType !== expectedMediaType) return false;
 
@@ -554,41 +586,65 @@
 
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
+            const needDetailsCheck = (filters.type === 'tv_upcoming') || (filters.type === 'tv' && filters.sort === 'next_episode.asc');
 
-            if (filters.type === 'tv_upcoming' && filtered.length > 0) {
+            if (needDetailsCheck && filtered.length > 0) {
                 const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
                 const apiKey = Lampa.Storage.get('seerr_api_key', '');
                 if (!SESSION_CACHE.tvDetails) SESSION_CACHE.tvDetails = {};
 
                 let checkedCount = 0;
-                const multiSeasonSeries = [];
+                const passedMap = {};
 
                 const checkComplete = () => {
                     checkedCount++;
                     if (checkedCount === filtered.length) {
-                        const ordered = filtered.filter(el => multiSeasonSeries.includes(el.id));
-                        this.applyFilteredResults(ordered, append, currentPage);
+                        let resultList = filtered.filter(el => passedMap[el.id]);
+
+                        // Сортировка по дате ближайшего выхода серии (от самой скорой к более поздним)
+                        if (filters.sort === 'next_episode.asc') {
+                            resultList.sort((a, b) => {
+                                const dateA = a._nextAirDate || '9999-12-31';
+                                const dateB = b._nextAirDate || '9999-12-31';
+                                return dateA.localeCompare(dateB);
+                            });
+                        }
+
+                        this.applyFilteredResults(resultList, append, currentPage);
                     }
                 };
 
                 const evaluateDetails = (item, details) => {
                     if (!details || !Array.isArray(details.seasons)) return;
 
-                    const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
-                    if (!isOngoing) return;
-
-                    const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
-                    if (regularSeasons.length === 0) return;
-
-                    let targetSeasonNum = null;
-                    if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
-                        targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
+                    // Сохраняем дату выхода ближайшей серии или нового сезона для сортировки
+                    if (details.nextEpisodeToAir && details.nextEpisodeToAir.airDate) {
+                        item._nextAirDate = details.nextEpisodeToAir.airDate;
                     } else {
-                        targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                        const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
+                        const lastS = regularSeasons.at(-1);
+                        item._nextAirDate = (lastS && lastS.airDate) ? lastS.airDate : '9999-12-31';
                     }
 
-                    if (targetSeasonNum > 1) {
-                        multiSeasonSeries.push(item.id);
+                    if (filters.type === 'tv_upcoming') {
+                        const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
+                        if (!isOngoing) return;
+
+                        const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
+                        if (regularSeasons.length === 0) return;
+
+                        let targetSeasonNum = null;
+                        if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
+                            targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
+                        } else {
+                            targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                        }
+
+                        if (targetSeasonNum > 1) {
+                            passedMap[item.id] = true;
+                        }
+                    } else {
+                        passedMap[item.id] = true;
                     }
                 };
 
