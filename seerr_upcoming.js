@@ -82,10 +82,6 @@
         Lampa.Storage.set(HISTORY_KEY, list);
     }
 
-    function clearSearchHistory() {
-        Lampa.Storage.set(HISTORY_KEY, []);
-    }
-
     function SeerrCatalogComponent(object) {
         const network = new Lampa.Reguest();
         const scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
@@ -110,7 +106,6 @@
             lang: 'all',
             search: ''
         };
-
         this.create = function () {
             this.renderHeader();
             scroll.append(body);
@@ -157,6 +152,7 @@
                 }
             }
         };
+
         this.renderHeader = function () {
             const yearsList = getYearsList();
             const isSearch = Boolean(filters.search);
@@ -258,79 +254,18 @@
                     }
                 });
             };
-
-                const historyContainer = modalBody.find('.seerr-history-list');
-                history.forEach(term => {
-                    const row = $(`
-                        <div class="simple-button selector" style="margin: 0; text-align: left; display: flex; justify-content: space-between; align-items: center;">
-                            <span>🕒 ${term}</span>
-                            <span style="font-size: 0.8em; opacity: 0.5;">Подставить</span>
-                        </div>
-                    `);
-                    row.on('hover:enter', () => {
-                        currentVal = term;
-                        modalBody.find('.seerr-input-box').text(currentVal);
-                        Lampa.Modal.close();
-                        applySearchQuery(currentVal);
-                    });
-                    historyContainer.append(row);
-                });
-
-                modalBody.find('.seerr-input-box').on('hover:enter', () => {
-                    Lampa.Modal.close();
-                    Lampa.Input.edit({
-                        title: 'Введите название фильма или сериала',
-                        value: currentVal,
-                        free: true,
-                        nosave: true
-                    }, (newValue) => {
-                        applySearchQuery(newValue);
-                    });
-                });
-
-                modalBody.find('.seerr-btn-submit').on('hover:enter', () => {
-                    Lampa.Modal.close();
-                    applySearchQuery(currentVal);
-                });
-
-                modalBody.find('.seerr-btn-clear').on('hover:enter', () => {
-                    Lampa.Modal.close();
-                    applySearchQuery('');
-                });
-
-                Lampa.Modal.open({
-                    title: 'Поиск по каталогу',
-                    html: modalBody,
-                    size: 'medium',
-                    onBack: () => {
-                        Lampa.Modal.close();
-                        Lampa.Controller.toggle('content');
-                    }
-                });
-            };
-
-            header.find('.filter-search').on('hover:enter', () => {
-                openSearchModal();
-            });
+            header.find('.filter-search').on('hover:enter', openSearchModal);
+            header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', TYPES, 'type', '.filter-type', 'Тип: '));
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', SORTS, 'sort', '.filter-sort', 'Сортировка: '));
             header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', LANGS, 'lang', '.filter-lang', 'Язык: '));
 
             header.find('.filter-year').on('hover:enter', () => {
                 const selectItems = [
-                    {
-                        title: '📅 Указать диапазон (от и до)...',
-                        value: 'range',
-                        selected: filters.year === 'range'
-                    }
+                    { title: '📅 Указать диапазон (от и до)...', value: 'range', selected: filters.year === 'range' }
                 ];
-
                 Object.keys(yearsList).forEach(key => {
-                    selectItems.push({
-                        title: yearsList[key],
-                        value: key,
-                        selected: filters.year === key
-                    });
+                    selectItems.push({ title: yearsList[key], value: key, selected: filters.year === key });
                 });
 
                 Lampa.Select.show({
@@ -347,22 +282,20 @@
                         }
 
                         Lampa.Input.edit({
-                            title: 'Год ОТ (например: 2026, или пусто)',
+                            title: 'Год ОТ (например: 2026)',
                             value: filters.yearFrom || String(new Date().getFullYear()),
                             free: true,
                             nosave: true
                         }, (fromVal) => {
                             const cleanFrom = (fromVal || '').replace(/\D/g, '').slice(0, 4);
-
                             setTimeout(() => {
                                 Lampa.Input.edit({
-                                    title: 'Год ДО (например: 2028, или пусто)',
+                                    title: 'Год ДО (например: 2028)',
                                     value: filters.yearTo || '',
                                     free: true,
                                     nosave: true
                                 }, (toVal) => {
                                     const cleanTo = (toVal || '').replace(/\D/g, '').slice(0, 4);
-
                                     if (!cleanFrom && !cleanTo) {
                                         filters.year = 'all';
                                         filters.yearFrom = '';
@@ -377,7 +310,6 @@
                                             filters.yearTo = cleanTo;
                                         }
                                     }
-
                                     html.find('.filter-year').text(getYearButtonText());
                                     this.resetAndReload();
                                     Lampa.Controller.toggle('content');
@@ -396,11 +328,8 @@
 
         this.updateFilterVisibility = function () {
             const isSearch = Boolean(filters.search);
-            const extraBtns = html.find('.filter-genre, .filter-year, .filter-lang');
-            const sortBtn = html.find('.filter-sort');
-
-            extraBtns.css('display', 'inline-flex');
-            sortBtn.css('display', isSearch ? 'none' : 'inline-flex');
+            html.find('.filter-genre, .filter-year, .filter-lang').css('display', 'inline-flex');
+            html.find('.filter-sort').css('display', isSearch ? 'none' : 'inline-flex');
         };
 
         this.openSelect = function (title, listObj, filterKey, btnSelector, prefix) {
@@ -416,9 +345,7 @@
                 onSelect: (selected) => {
                     filters[filterKey] = selected.value;
                     html.find(btnSelector).text(prefix + selected.title);
-                    if (filterKey === 'type') {
-                        this.updateFilterVisibility();
-                    }
+                    if (filterKey === 'type') this.updateFilterVisibility();
                     this.resetAndReload();
                 },
                 onBack: () => {
@@ -475,7 +402,6 @@
             let lteDate = '';
 
             if (isNewSeasons) {
-                // Для новых сезонов сериал должен был стартовать не позже сегодняшнего дня
                 lteDate = today;
                 if (filters.year === 'range') {
                     if (filters.yearFrom) gteDate = `${filters.yearFrom}-01-01`;
@@ -562,7 +488,6 @@
                 }
             });
         };
-
         this.filterResults = function (rawResults) {
             const hideNoPoster = Lampa.Storage.get('seerr_hide_no_poster', true);
             const onlyRu = Lampa.Storage.get('seerr_only_ru', false);
@@ -626,6 +551,7 @@
                 return true;
             });
         };
+
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
 
@@ -716,7 +642,6 @@
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
-
         this.fetchTvSeasonInfo = function (tvId, cardEl) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const apiKey = Lampa.Storage.get('seerr_api_key', '');
@@ -775,6 +700,7 @@
                 headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
             });
         };
+
         this.buildCards = function (results) {
             const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
             const showGenres = Lampa.Storage.get('seerr_show_genres', true);
@@ -878,7 +804,6 @@
 
             if (active) Lampa.Controller.collectionSet(scroll.render());
         };
-
         this.start = function () {
             active = true;
             Lampa.Controller.add('content', {
