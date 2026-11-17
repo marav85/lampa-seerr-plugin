@@ -74,20 +74,21 @@
             `);
 
             header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', {
-                movie: 'Фильмы (Ожидаемые)',
-                tv: 'Сериалы (Ожидаемые)'
+                movie: 'Фильмы',
+                tv: 'Сериалы'
             }, 'type', '.filter-type', 'Тип: '));
 
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
             header.find('.filter-year').on('hover:enter', () => this.openSelect('Год релиза', getYearsList(), 'year', '.filter-year', 'Год: '));
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', {
                 'popularity.desc': 'Популярные',
-                'primary_release_date.asc': 'Скоро выходят (по дате)',
+                'release_date.asc': 'По дате (сначала ближайшие)',
                 'vote_average.desc': 'По рейтингу'
             }, 'sort', '.filter-sort', 'Сортировка: '));
 
             html.prepend(header);
         };
+
         this.openSelect = function (title, listObj, filterKey, btnSelector, prefix) {
             const selectItems = Object.keys(listObj).map(key => ({
                 title: listObj[key],
@@ -112,11 +113,11 @@
         this.resetAndReload = function () {
             page = 1;
             items = [];
+            last_focused = null;
             body.empty();
             this.activity.loader(true);
             this.loadData(false);
         };
-
         this.loadData = function (append) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const apiKey = Lampa.Storage.get('seerr_api_key', '');
@@ -128,30 +129,36 @@
             }
 
             loading = true;
-            const today = new Date().toISOString().split('T')[0];
-            const endpoint = filters.type === 'movie' ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
+            const today = new Date().toISOString().split('T');
+            const isMovie = filters.type === 'movie';
+            const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
+            // Исправляем сортировку для сериалов (в TMDB/Seerr разные названия полей дат)
+            let sortValue = filters.sort;
+            if (sortValue === 'release_date.asc') {
+                sortValue = isMovie ? 'primary_release_date.asc' : 'first_air_date.asc';
+            }
+
             let params = [
                 `page=${page}`,
                 `language=ru`,
-                `sortBy=${filters.sort}`
+                `sortBy=${sortValue}`
             ];
 
-            if (filters.type === 'movie') {
-                params.push(`primaryReleaseDateGte=${today}`);
-                if (filters.year !== 'all') {
-                    params.push(`primaryReleaseDateGte=${filters.year}-01-01`);
-                    params.push(`primaryReleaseDateLte=${filters.year}-12-31`);
-                }
+            // Корректная фильтрация дат без дублирования параметров
+            const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
+            const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
+
+            if (filters.year === 'all') {
+                params.push(`${dateGteKey}=${today}`);
             } else {
-                params.push(`firstAirDateGte=${today}`);
-                if (filters.year !== 'all') {
-                    params.push(`firstAirDateGte=${filters.year}-01-01`);
-                    params.push(`firstAirDateLte=${filters.year}-12-31`);
-                }
+                params.push(`${dateGteKey}=${filters.year}-01-01`);
+                params.push(`${dateLteKey}=${filters.year}-12-31`);
             }
 
-            if (filters.genre !== 'all') params.push(`genre=${filters.genre}`);
+            if (filters.genre !== 'all') {
+                params.push(`genre=${filters.genre}`);
+            }
 
             const url = `${domain}${endpoint}?${params.join('&')}`;
 
@@ -161,7 +168,7 @@
                 loading = false;
                 this.activity.loader(false);
 
-                if (json && json.results) {
+                if (json && json.results && json.results.length > 0) {
                     total_pages = json.totalPages || 1;
                     this.buildCards(json.results);
                 } else if (!append) {
@@ -172,8 +179,9 @@
             }, (error) => {
                 loading = false;
                 this.activity.loader(false);
-                Lampa.Noty.show('Ошибка подключения к Seerr. Проверьте домен, SSL и CORS.');
-                console.error('[Seerr Plugin Error]', error);
+                Lampa.Noty.show('Ошибка API Seerr: ' + (error.status || 'Сетевая ошибка'));
+                console.error('[Seerr Plugin Error]', url, error);
+                if (!append) this.start();
             }, false, {
                 headers: {
                     'X-Api-Key': apiKey,
@@ -181,6 +189,7 @@
                 }
             });
         };
+
         this.buildCards = function (results) {
             results.forEach(element => {
                 const cardData = {
@@ -216,9 +225,12 @@
                     }
                 }
 
+                // ИСПРАВЛЕНО: корректная загрузка постера через jQuery .attr() и прокси TMDB Lampa
                 const img = card.find('.card__img');
                 if (cardData.poster_path) {
-                    img.src = Lampa.TMDB.image('t/p/w300' + cardData.poster_path);
+                    img.attr('src', Lampa.TMDB.image('t/p/w300' + cardData.poster_path));
+                } else {
+                    img.attr('src', './img/img_broken.svg');
                 }
 
                 card.on('hover:focus', (e) => {
@@ -245,6 +257,7 @@
         };
 
         this.start = function () {
+            active = true;
             Lampa.Controller.add('content', {
                 toggle: () => {
                     Lampa.Controller.collectionSet(this.render());
