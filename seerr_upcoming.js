@@ -26,7 +26,10 @@
         35: 'Комедия', 80: 'Криминал', 99: 'Документальный', 18: 'Драма',
         10751: 'Семейный', 14: 'Фэнтези', 36: 'История', 27: 'Ужасы',
         10402: 'Музыка', 9648: 'Детектив', 10749: 'Мелодрама', 878: 'Фантастика',
-        53: 'Триллер', 10752: 'Военный', 37: 'Вестерн'
+        53: 'Триллер', 10752: 'Военный', 37: 'Вестерн',
+        10759: 'Экшн/Приключения', 10762: 'Детский', 10763: 'Новости',
+        10764: 'Реалити', 10765: 'Фантастика/Фэнтези', 10766: 'Мыльная опера',
+        10767: 'Ток-шоу', 10768: 'Война и политика'
     };
 
     const LANGS = {
@@ -448,9 +451,71 @@
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
-        
+
+        this.fetchTvSeasonInfo = function (tvId, cardEl) {
+            const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
+            const apiKey = Lampa.Storage.get('seerr_api_key', '');
+            if (!SESSION_CACHE.tvDetails) SESSION_CACHE.tvDetails = {};
+
+            const renderBadge = (details) => {
+                if (!details || !Array.isArray(details.seasons)) return;
+
+                const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
+                if (regularSeasons.length === 0) return;
+
+                let targetSeasonNum = null;
+                if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
+                    targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
+                } else {
+                    targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                }
+
+                const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons.at(-1);
+                if (!seasonObj) return;
+
+                const totalEps = seasonObj.episodeCount || 0;
+                const today = new Date().toISOString().slice(0, 10);
+                let airedEps = 0;
+
+                if (seasonObj.airDate && seasonObj.airDate > today) {
+                    airedEps = 0;
+                } else if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber === seasonObj.seasonNumber) {
+                    airedEps = Math.max(0, (details.nextEpisodeToAir.episodeNumber || 1) - 1);
+                } else if (details.lastEpisodeToAir && details.lastEpisodeToAir.seasonNumber === seasonObj.seasonNumber) {
+                    airedEps = details.lastEpisodeToAir.episodeNumber || totalEps;
+                } else if (seasonObj.airDate && seasonObj.airDate <= today) {
+                    airedEps = totalEps;
+                }
+
+                const epText = totalEps > 0 ? `${airedEps} из ${totalEps}` : `${airedEps} сер.`;
+                const badgeText = `S${seasonObj.seasonNumber} • ${epText}`;
+
+                cardEl.find('.card__view').append(
+                    `<div class="seerr-season-badge" style="background: rgba(0, 0, 0, 0.78); color: #fff; font-size: 0.85em; padding: 0.25em 0.5em; border-radius: 0.3em; position: absolute; bottom: 0.5em; left: 0.5em; z-index: 2;">${badgeText}</div>`
+                );
+            };
+
+            if (SESSION_CACHE.tvDetails[tvId]) {
+                renderBadge(SESSION_CACHE.tvDetails[tvId]);
+                return;
+            }
+
+            const req = new Lampa.Reguest();
+            req.native(`${domain}/api/v1/tv/${tvId}`, (details) => {
+                if (details) {
+                    SESSION_CACHE.tvDetails[tvId] = details;
+                    renderBadge(details);
+                }
+            }, () => {}, false, {
+                headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
+            });
+        };
+
         this.buildCards = function (results) {
             const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
+            const showGenres = Lampa.Storage.get('seerr_show_genres', true);
+            const showSeasons = Lampa.Storage.get('seerr_show_seasons', true);
+            const showRating = Lampa.Storage.get('seerr_show_rating', true);
 
             results.forEach((element) => {
                 const currentIndex = items.length;
@@ -472,6 +537,30 @@
                     release_year: cardData.release_date ? cardData.release_date.slice(0, 4) : 'Скоро'
                 });
 
+                // 1. Рейтинг (левый верхний угол постера, если включено в настройках и оценка > 0)
+                if (showRating && cardData.vote_average > 0) {
+                    const ratingVal = Number(cardData.vote_average).toFixed(1);
+                    const ratingColor = ratingVal >= 7 ? '#2ecc71' : (ratingVal >= 5 ? '#f39c12' : '#e74c3c');
+                    card.find('.card__view').append(
+                        `<div class="seerr-rating-badge" style="background: rgba(0, 0, 0, 0.78); color: ${ratingColor}; font-weight: 700; font-size: 0.85em; padding: 0.25em 0.5em; border-radius: 0.3em; position: absolute; top: 0.5em; left: 0.5em; z-index: 2;">★ ${ratingVal}</div>`
+                    );
+                }
+
+                // 2. Жанры под названием карточки (если включено в настройках)
+                if (showGenres && Array.isArray(element.genreIds) && element.genreIds.length > 0) {
+                    const genreNames = element.genreIds
+                        .map(id => GENRES[id])
+                        .filter(Boolean)
+                        .slice(0, 2);
+
+                    if (genreNames.length > 0) {
+                        card.find('.card__title').after(
+                            `<div class="seerr-card-genres" style="font-size: 0.8em; color: rgba(255,255,255,0.6); margin-top: 0.25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${genreNames.join(', ')}</div>`
+                        );
+                    }
+                }
+
+                // 3. Статус запроса в Seerr (правый верхний угол)
                 if (element.mediaInfo && element.mediaInfo.status) {
                     const statusMap = {
                         2: { text: 'Запрошено', color: '#e67e22' },
@@ -485,6 +574,11 @@
                             `<div class="card__quality" style="background: ${st.color}; color: #fff;">${st.text}</div>`
                         );
                     }
+                }
+
+                // 4. Номер сезона и серии для сериалов (левый нижний угол, если включено в настройках)
+                if (showSeasons && mediaMethod === 'tv') {
+                    this.fetchTvSeasonInfo(cardData.id, card);
                 }
 
                 const img = card.find('.card__img');
@@ -593,6 +687,25 @@
             param: { name: 'seerr_only_ru', type: 'trigger', default: false },
             field: { name: 'Только с русским переводом', description: 'Показывать только релизы с русским названием или описанием' }
         });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_show_genres', type: 'trigger', default: true },
+            field: { name: 'Показывать жанры', description: 'Выводить названия жанров под заголовком карточки' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_show_seasons', type: 'trigger', default: true },
+            field: { name: 'Показывать сезон и серии', description: 'Отображать номер сезона и количество вышедших серий для сериалов' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_show_rating', type: 'trigger', default: true },
+            field: { name: 'Показывать рейтинг', description: 'Выводить оценку TMDB в углу постера (если она уже есть)' }
+        });
+
 
         const menuItem = $(`
             <li class="menu__item selector" data-action="${PLUGIN_ID}">
