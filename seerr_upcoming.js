@@ -206,9 +206,8 @@
                 params.push(`language=${encodeURIComponent(filters.lang)}`);
             }
 
-            // Для сериалов используем airDateGte, чтобы видеть и новые сериалы, и новые сезоны
-            const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'airDateGte';
-            const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'airDateLte';
+            const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
+            const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
             if (filters.year === 'all') {
                 params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
