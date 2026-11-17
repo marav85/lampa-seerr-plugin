@@ -28,22 +28,32 @@
         en: 'США / Британия (EN)',
         ru: 'Россия (RU)',
         ko: 'Корея (KO)',
-        ja: 'Япония (JA)'
+        ja: 'Япония (JA)',
+        fr: 'Франция (FR)',
+        de: 'Германия (DE)',
+        es: 'Испания (ES)'
     };
 
     const SORTS = {
-        'popularity.desc': 'Популярные',
+        'popularity.desc': 'Популярные (сначала хиты)',
         'release_date.asc': 'По дате (ближайшие)',
-        'vote_average.desc': 'По рейтингу'
+        'release_date.desc': 'По дате (самые дальние)',
+        'vote_average.desc': 'По рейтингу (высокий)',
+        'vote_count.desc': 'По количеству оценок',
+        'original_title.asc': 'По названию (А-Я)'
     };
 
     function getYearsList() {
         const currentYear = new Date().getFullYear();
-        const years = { all: 'Все годы' };
-        for (let y = currentYear + 2; y >= currentYear - 5; y--) {
+        const years = { all: 'Все годы (будущие)' };
+        for (let y = currentYear + 3; y >= currentYear; y--) {
             years[y.toString()] = y.toString();
         }
         return years;
+    }
+
+    function hasCyrillic(text) {
+        return text && /[а-яА-ЯёЁ]/.test(text);
     }
 
     function SeerrCatalogComponent(object) {
@@ -59,7 +69,7 @@
         let total_pages = 1;
         let loading = false;
         let loaded_pages = {};
-        let initial_prefetch_target = 3;
+        let min_cards_buffer = 40; // Держим минимум 40 отфильтрованных карточек в буфере
 
         let filters = SESSION_CACHE.state ? Object.assign({}, SESSION_CACHE.state.filters) : {
             type: 'movie',
@@ -177,9 +187,14 @@
             const isMovie = filters.type === 'movie';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
+            // Маппинг сортировки отдельно для фильмов и сериалов
             let sortValue = filters.sort;
             if (sortValue === 'release_date.asc') {
                 sortValue = isMovie ? 'primary_release_date.asc' : 'first_air_date.asc';
+            } else if (sortValue === 'release_date.desc') {
+                sortValue = isMovie ? 'primary_release_date.desc' : 'first_air_date.desc';
+            } else if (sortValue === 'original_title.asc') {
+                sortValue = isMovie ? 'original_title.asc' : 'original_name.asc';
             }
 
             let params = [
@@ -197,7 +212,9 @@
             if (filters.year === 'all') {
                 params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
             } else {
-                params.push(`${dateGteKey}=${encodeURIComponent(filters.year + '-01-01')}`);
+                // Если выбран текущий год — берем от сегодняшнего дня до конца года, чтобы не показывать прошедшие
+                const startDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
+                params.push(`${dateGteKey}=${encodeURIComponent(startDate)}`);
                 params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
             }
 
@@ -262,7 +279,33 @@
                 }
             });
         };
-        this.handleResults = function (results, append, currentPage) {
+        this.filterResults = function (rawResults) {
+            const hideNoPoster = Lampa.Storage.get('seerr_hide_no_poster', true);
+            const onlyRu = Lampa.Storage.get('seerr_only_ru', false);
+            const today = new Date().toISOString().slice(0, 10);
+
+            return rawResults.filter((el) => {
+                // 1. Жесткая отсечка старых релизов (защита от бага TMDB с сериалами за январь)
+                const relDate = el.releaseDate || el.firstAirDate || '';
+                if (relDate && relDate < today) return false;
+
+                // 2. Фильтр: скрывать без постера
+                if (hideNoPoster && !el.posterPath) return false;
+
+                // 3. Фильтр: только с русским названием или описанием
+                if (onlyRu) {
+                    const title = el.title || el.name || '';
+                    const overview = el.overview || '';
+                    if (!hasCyrillic(title) && !hasCyrillic(overview)) return false;
+                }
+
+                return true;
+            });
+        };
+
+        this.handleResults = function (rawResults, append, currentPage) {
+            const filtered = this.filterResults(rawResults);
+
             if (!SESSION_CACHE.state || !append) {
                 SESSION_CACHE.state = {
                     filters: Object.assign({}, filters),
@@ -275,13 +318,16 @@
             }
             SESSION_CACHE.state.page = currentPage;
             SESSION_CACHE.state.loaded_pages = Object.assign({}, loaded_pages);
-            SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(results);
+            SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(filtered);
 
-            this.buildCards(results);
+            this.buildCards(filtered);
             if (!append) this.start();
 
-            if (currentPage < initial_prefetch_target && currentPage < total_pages) {
-                setTimeout(() => this.loadNextPage(), 150);
+            // Докачиваем страницы в буфер, пока не наберется минимум 40 подходящих карточек
+            if (items.length < min_cards_buffer && currentPage < total_pages) {
+                setTimeout(() => this.loadNextPage(), 120);
+            } else if (items.length === 0 && currentPage >= total_pages) {
+                body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
 
@@ -414,6 +460,18 @@
             component: PLUGIN_ID,
             param: { name: 'seerr_api_key', type: 'input', values: '', default: '' },
             field: { name: 'API Key', description: 'Ключ из настроек Seerr (Settings -> General -> API Key)' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_hide_no_poster', type: 'trigger', default: true },
+            field: { name: 'Скрывать без постера', description: 'Не показывать анонсы, у которых еще нет обложки' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_only_ru', type: 'trigger', default: false },
+            field: { name: 'Только с русским переводом', description: 'Показывать только релизы с русским названием или описанием' }
         });
 
         const menuItem = $(`
