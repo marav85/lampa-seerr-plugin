@@ -617,32 +617,56 @@
                 const evaluateDetails = (item, details) => {
                     if (!details || !Array.isArray(details.seasons)) return;
 
-                    // Сохраняем дату выхода ближайшей серии или нового сезона для сортировки
+                    const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
+                    if (regularSeasons.length === 0) return;
+
+                    let targetSeasonNum = null;
+                    if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
+                        targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
+                    } else {
+                        targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                    }
+
+                    const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons.at(-1);
+                    if (!seasonObj) return;
+
+                    const totalEps = seasonObj.episodeCount || 0;
+                    const today = new Date().toISOString().slice(0, 10);
+                    let airedEps = 0;
+
+                    if (seasonObj.airDate && seasonObj.airDate > today) {
+                        airedEps = 0;
+                    } else if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber === seasonObj.seasonNumber) {
+                        airedEps = Math.max(0, (details.nextEpisodeToAir.episodeNumber || 1) - 1);
+                    } else if (details.lastEpisodeToAir && details.lastEpisodeToAir.seasonNumber === seasonObj.seasonNumber) {
+                        airedEps = details.lastEpisodeToAir.episodeNumber || totalEps;
+                    } else if (seasonObj.airDate && seasonObj.airDate <= today) {
+                        airedEps = totalEps;
+                    }
+
+                    // Сохраняем дату ближайшей серии для сортировки
                     if (details.nextEpisodeToAir && details.nextEpisodeToAir.airDate) {
                         item._nextAirDate = details.nextEpisodeToAir.airDate;
+                    } else if (seasonObj.airDate && seasonObj.airDate >= today) {
+                        item._nextAirDate = seasonObj.airDate;
                     } else {
-                        const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
-                        const lastS = regularSeasons.at(-1);
-                        item._nextAirDate = (lastS && lastS.airDate) ? lastS.airDate : '9999-12-31';
+                        item._nextAirDate = '9999-12-31';
                     }
 
                     if (filters.type === 'tv_upcoming') {
                         const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
                         if (!isOngoing) return;
+                        if (targetSeasonNum <= 1) return;
 
-                        const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
-                        if (regularSeasons.length === 0) return;
+                        // 1. Отсекаем сезоны, где все серии уже вышли (например, "20 из 20")
+                        if (totalEps > 0 && airedEps >= totalEps) return;
 
-                        let targetSeasonNum = null;
-                        if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
-                            targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
-                        } else {
-                            targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                        // 2. Если выбрана сортировка "Ближайшая серия", отсекаем пустые заглушки ("0 сер.") без даты выхода
+                        if (filters.sort === 'next_episode.asc' && item._nextAirDate === '9999-12-31') {
+                            return;
                         }
 
-                        if (targetSeasonNum > 1) {
-                            passedMap[item.id] = true;
-                        }
+                        passedMap[item.id] = true;
                     } else {
                         passedMap[item.id] = true;
                     }
@@ -689,7 +713,19 @@
             SESSION_CACHE.state.loaded_pages = Object.assign({}, loaded_pages);
             SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(filtered);
 
-            this.buildCards(filtered);
+            if (filters.sort === 'next_episode.asc' && SESSION_CACHE.state.itemsData.length > 1) {
+                SESSION_CACHE.state.itemsData.sort((a, b) => {
+                    const dateA = a._nextAirDate || '9999-12-31';
+                    const dateB = b._nextAirDate || '9999-12-31';
+                    return dateA.localeCompare(dateB);
+                });
+                items = [];
+                body.empty();
+                this.buildCards(SESSION_CACHE.state.itemsData);
+            } else {
+                this.buildCards(filtered);
+            }
+
             if (!append) this.start();
 
             if (items.length < min_cards_buffer && currentPage < total_pages) {
@@ -698,6 +734,7 @@
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
+
         this.fetchTvSeasonInfo = function (tvId, cardEl) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const apiKey = Lampa.Storage.get('seerr_api_key', '');
