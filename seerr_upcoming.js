@@ -82,7 +82,8 @@
             genre: 'all',
             year: 'all',
             sort: 'popularity.desc',
-            lang: 'all'
+            lang: 'all',
+            search: ''
         };
 
         this.create = function () {
@@ -131,18 +132,36 @@
         };
         this.renderHeader = function () {
             const yearsList = getYearsList();
-            const isUpcomingFeed = filters.type === 'tv_upcoming';
+            const isUpcomingFeed = filters.type === 'tv_upcoming' && !filters.search;
             const extraDisplay = isUpcomingFeed ? 'none' : 'block';
+            const sortDisplay = (isUpcomingFeed || filters.search) ? 'none' : 'block';
+            const searchLabel = filters.search ? `Поиск: ${filters.search}` : 'Поиск';
 
             const header = $(`
                 <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; gap: 1em; flex-wrap: wrap;">
+                    <div class="simple-button selector filter-search">${searchLabel}</div>
                     <div class="simple-button selector filter-type">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
                     <div class="simple-button selector filter-genre" style="display: ${extraDisplay};">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
                     <div class="simple-button selector filter-year" style="display: ${extraDisplay};">Год: ${yearsList[filters.year] || 'Все годы'}</div>
-                    <div class="simple-button selector filter-sort" style="display: ${extraDisplay};">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
+                    <div class="simple-button selector filter-sort" style="display: ${sortDisplay};">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
                     <div class="simple-button selector filter-lang" style="display: ${extraDisplay};">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
             `);
+
+            header.find('.filter-search').on('hover:enter', () => {
+                Lampa.Input.edit({
+                    title: 'Поиск (оставьте пустым для сброса)',
+                    value: filters.search || '',
+                    free: true,
+                    nosave: true
+                }, (newValue) => {
+                    filters.search = (newValue || '').trim();
+                    header.find('.filter-search').text(filters.search ? `Поиск: ${filters.search}` : 'Поиск');
+                    this.updateFilterVisibility();
+                    this.resetAndReload();
+                    Lampa.Controller.toggle('content');
+                });
+            });
 
             header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', TYPES, 'type', '.filter-type', 'Тип: '));
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
@@ -154,12 +173,19 @@
         };
 
         this.updateFilterVisibility = function () {
-            const isUpcomingFeed = filters.type === 'tv_upcoming';
-            const extraBtns = html.find('.filter-genre, .filter-year, .filter-sort, .filter-lang');
+            const isSearch = Boolean(filters.search);
+            const isUpcomingFeed = filters.type === 'tv_upcoming' && !isSearch;
+
+            const extraBtns = html.find('.filter-genre, .filter-year, .filter-lang');
+            const sortBtn = html.find('.filter-sort');
+
             if (isUpcomingFeed) {
                 extraBtns.hide();
+                sortBtn.hide();
             } else {
                 extraBtns.show();
+                if (isSearch) sortBtn.hide();
+                else sortBtn.show();
             }
         };
 
@@ -202,7 +228,12 @@
         this.buildUrl = function (targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
 
-            // Отдельный эндпоинт для новых сезонов и серий уже идущих сериалов
+            // Режим поиска по запросу пользователя
+            if (filters.search) {
+                return `${domain}/api/v1/search?query=${encodeURIComponent(filters.search)}&page=${targetPage}`;
+            }
+
+            // Лента новых сезонов и серий
             if (filters.type === 'tv_upcoming') {
                 return `${domain}/api/v1/discover/tv/upcoming?page=${targetPage}`;
             }
@@ -305,18 +336,41 @@
             const hideNoPoster = Lampa.Storage.get('seerr_hide_no_poster', true);
             const onlyRu = Lampa.Storage.get('seerr_only_ru', false);
             const today = new Date().toISOString().slice(0, 10);
+            const isSearch = Boolean(filters.search);
+            const expectedMediaType = filters.type === 'movie' ? 'movie' : 'tv';
 
             return rawResults.filter((el) => {
-                // Для фильмов отсекаем прошедшие даты
-                if (filters.type === 'movie') {
-                    const relDate = el.releaseDate || '';
-                    if (relDate && relDate < today) return false;
+                if (isSearch) {
+                    if (el.mediaType && el.mediaType !== expectedMediaType) return false;
+
+                    if (filters.genre !== 'all') {
+                        if (!Array.isArray(el.genreIds) || !el.genreIds.includes(Number(filters.genre))) {
+                            return false;
+                        }
+                    }
+
+                    if (filters.lang !== 'all') {
+                        if (el.originalLanguage !== filters.lang) return false;
+                    }
+
+                    const relDate = el.releaseDate || el.firstAirDate || '';
+                    if (filters.type !== 'tv_upcoming') {
+                        if (filters.year === 'all') {
+                            if (relDate && relDate < today) return false;
+                        } else {
+                            if (!relDate || !relDate.startsWith(filters.year)) return false;
+                            if (filters.year === today.slice(0, 4) && relDate < today) return false;
+                        }
+                    }
+                } else {
+                    if (filters.type === 'movie') {
+                        const relDate = el.releaseDate || '';
+                        if (relDate && relDate < today) return false;
+                    }
                 }
 
-                // Скрывать без постера
                 if (hideNoPoster && !el.posterPath) return false;
 
-                // Только с русским названием или описанием (не применяем для ленты новых сезонов, чтобы не резать выдачу)
                 if (onlyRu && filters.type !== 'tv_upcoming') {
                     const title = el.title || el.name || '';
                     const overview = el.overview || '';
@@ -353,9 +407,7 @@
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
-
         this.buildCards = function (results) {
-            // Приводим тип карточки для Lampa (для tv_upcoming метод тоже 'tv')
             const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
 
             results.forEach((element) => {
