@@ -128,7 +128,7 @@
             }
 
             loading = true;
-            const today = new Date().toISOString().split('T');
+            const today = new Date().toISOString().split('T')[0];
             const endpoint = filters.type === 'movie' ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
             let params = [
