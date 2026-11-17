@@ -210,10 +210,12 @@
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
             if (filters.year === 'all') {
-                params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
+                // Для фильмов берем строго от сегодня; для сериалов — с начала текущего года,
+                // чтобы захватывать анонсы без точного дня релиза
+                const defaultFrom = isMovie ? today : `${today.slice(0, 4)}-01-01`;
+                params.push(`${dateGteKey}=${encodeURIComponent(defaultFrom)}`);
             } else {
-                // Если выбран текущий год — берем от сегодняшнего дня до конца года, чтобы не показывать прошедшие
-                const startDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
+                const startDate = (isMovie && filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
                 params.push(`${dateGteKey}=${encodeURIComponent(startDate)}`);
                 params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
             }
