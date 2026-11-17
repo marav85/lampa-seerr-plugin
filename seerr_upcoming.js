@@ -391,32 +391,66 @@
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
 
-            // Если это поиск в режиме "Новые сезоны", проверяем статус каждого сериала через /api/v1/tv/{id},
-            // чтобы отсеять завершенные шоу (Ended / Canceled)
-            if (filters.search && filters.type === 'tv_upcoming' && filtered.length > 0) {
+            // В режиме "Сериалы: новые сезоны" запрашиваем детали по каждому сериалу (/api/v1/tv/{id}),
+            // чтобы оставить строго те, у которых актуальный/будущий сезон больше 1-го (S2, S3 и т.д.)
+            if (filters.type === 'tv_upcoming' && filtered.length > 0) {
                 const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
                 const apiKey = Lampa.Storage.get('seerr_api_key', '');
+                if (!SESSION_CACHE.tvDetails) SESSION_CACHE.tvDetails = {};
+
                 let checkedCount = 0;
-                const activeSeries = [];
+                const multiSeasonSeries = [];
+
+                const checkComplete = () => {
+                    checkedCount++;
+                    if (checkedCount === filtered.length) {
+                        // Сохраняем исходный порядок карточек
+                        const ordered = filtered.filter(el => multiSeasonSeries.includes(el.id));
+                        this.applyFilteredResults(ordered, append, currentPage);
+                    }
+                };
+
+                const evaluateDetails = (item, details) => {
+                    if (!details || !Array.isArray(details.seasons)) return;
+
+                    // При поиске дополнительно отсеиваем закрытые сериалы
+                    if (filters.search) {
+                        const isOngoing = details.nextEpisodeToAir || ['Returning Series', 'In Production', 'Planned'].includes(details.status);
+                        if (!isOngoing) return;
+                    }
+
+                    const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
+                    if (regularSeasons.length === 0) return;
+
+                    let targetSeasonNum = null;
+                    if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
+                        targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
+                    } else {
+                        targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                    }
+
+                    // Главное условие: номер сезона строго больше 1
+                    if (targetSeasonNum > 1) {
+                        multiSeasonSeries.push(item.id);
+                    }
+                };
 
                 filtered.forEach((item) => {
+                    if (SESSION_CACHE.tvDetails[item.id]) {
+                        evaluateDetails(item, SESSION_CACHE.tvDetails[item.id]);
+                        checkComplete();
+                        return;
+                    }
+
                     const tvReq = new Lampa.Reguest();
                     tvReq.native(`${domain}/api/v1/tv/${item.id}`, (details) => {
-                        checkedCount++;
-                        const isOngoing = details && (
-                            details.nextEpisodeToAir ||
-                            ['Returning Series', 'In Production', 'Planned'].includes(details.status)
-                        );
-                        if (isOngoing) activeSeries.push(item);
-
-                        if (checkedCount === filtered.length) {
-                            this.applyFilteredResults(activeSeries, append, currentPage);
+                        if (details) {
+                            SESSION_CACHE.tvDetails[item.id] = details;
+                            evaluateDetails(item, details);
                         }
+                        checkComplete();
                     }, () => {
-                        checkedCount++;
-                        if (checkedCount === filtered.length) {
-                            this.applyFilteredResults(activeSeries, append, currentPage);
-                        }
+                        checkComplete();
                     }, false, {
                         headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
                     });
@@ -426,6 +460,7 @@
 
             this.applyFilteredResults(filtered, append, currentPage);
         };
+
 
         this.applyFilteredResults = function (filtered, append, currentPage) {
             if (!SESSION_CACHE.state || !append) {
