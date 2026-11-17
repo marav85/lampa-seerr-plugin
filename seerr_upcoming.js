@@ -195,60 +195,77 @@
                 Lampa.Controller.toggle('content');
             };
 
-            const openKeyboard = () => {
-                Lampa.Input.edit({
-                    title: 'Поиск (оставьте пустым для сброса)',
-                    value: filters.search || '',
-                    free: true,
-                    nosave: true
-                }, (newValue) => {
-                    applySearchQuery(newValue);
+            const openSearchModal = () => {
+                let currentVal = filters.search || '';
+                const history = getSearchHistory();
+
+                const modalBody = $(`
+                    <div class="seerr-search-modal" style="padding: 1em;">
+                        <div style="display: flex; gap: 0.8em; align-items: center; margin-bottom: 1.2em;">
+                            <div class="simple-button selector seerr-input-box" style="flex: 1; text-align: left; background: rgba(255,255,255,0.12); min-height: 2.6em; display: flex; align-items: center; padding: 0 1em;">
+                                ${currentVal || '<span style="opacity: 0.5;">Нажмите, чтобы ввести текст...</span>'}
+                            </div>
+                            <div class="simple-button selector seerr-btn-submit" style="margin: 0;">Найти</div>
+                            ${currentVal ? '<div class="simple-button selector seerr-btn-clear" style="margin: 0;">Сброс</div>' : ''}
+                        </div>
+                        ${history.length > 0 ? '<div style="font-size: 0.85em; opacity: 0.6; margin-bottom: 0.6em;">Последние запросы:</div>' : ''}
+                        <div class="seerr-history-list" style="display: flex; flex-direction: column; gap: 0.5em;"></div>
+                    </div>
+                `);
+
+                const historyContainer = modalBody.find('.seerr-history-list');
+                history.forEach(term => {
+                    const row = $(`
+                        <div class="simple-button selector" style="margin: 0; text-align: left; display: flex; justify-content: space-between; align-items: center;">
+                            <span>🕒 ${term}</span>
+                            <span style="font-size: 0.8em; opacity: 0.5;">Подставить</span>
+                        </div>
+                    `);
+                    row.on('hover:enter', () => {
+                        currentVal = term;
+                        modalBody.find('.seerr-input-box').text(currentVal);
+                        Lampa.Modal.close();
+                        applySearchQuery(currentVal);
+                    });
+                    historyContainer.append(row);
+                });
+
+                modalBody.find('.seerr-input-box').on('hover:enter', () => {
+                    Lampa.Modal.close();
+                    Lampa.Input.edit({
+                        title: 'Введите название фильма или сериала',
+                        value: currentVal,
+                        free: true,
+                        nosave: true
+                    }, (newValue) => {
+                        applySearchQuery(newValue);
+                    });
+                });
+
+                modalBody.find('.seerr-btn-submit').on('hover:enter', () => {
+                    Lampa.Modal.close();
+                    applySearchQuery(currentVal);
+                });
+
+                modalBody.find('.seerr-btn-clear').on('hover:enter', () => {
+                    Lampa.Modal.close();
+                    applySearchQuery('');
+                });
+
+                Lampa.Modal.open({
+                    title: 'Поиск по каталогу',
+                    html: modalBody,
+                    size: 'medium',
+                    onBack: () => {
+                        Lampa.Modal.close();
+                        Lampa.Controller.toggle('content');
+                    }
                 });
             };
 
             header.find('.filter-search').on('hover:enter', () => {
-                const history = getSearchHistory();
-                if (history.length === 0) {
-                    openKeyboard();
-                    return;
-                }
-
-                const menuItems = [
-                    { title: '⌨️ Новый поиск...', action: 'new' }
-                ];
-
-                if (filters.search) {
-                    menuItems.push({ title: '❌ Сбросить текущий поиск', action: 'clear_current' });
-                }
-
-                history.forEach(term => {
-                    menuItems.push({ title: `🕒 ${term}`, value: term, action: 'history' });
-                });
-
-                menuItems.push({ title: '🗑 Очистить историю поиска', action: 'clear_history' });
-
-                Lampa.Select.show({
-                    title: 'Поиск и история запросов',
-                    items: menuItems,
-                    onSelect: (selected) => {
-                        if (selected.action === 'new') {
-                            openKeyboard();
-                        } else if (selected.action === 'clear_current') {
-                            applySearchQuery('');
-                        } else if (selected.action === 'history') {
-                            applySearchQuery(selected.value);
-                        } else if (selected.action === 'clear_history') {
-                            clearSearchHistory();
-                            Lampa.Noty.show('История поиска очищена');
-                            Lampa.Controller.toggle('content');
-                        }
-                    },
-                    onBack: () => {
-                        Lampa.Controller.toggle('content');
-                    }
-                });
+                openSearchModal();
             });
-            header.find('.filter-type').on('hover:enter', () => this.openSelect('Тип контента', TYPES, 'type', '.filter-type', 'Тип: '));
             header.find('.filter-genre').on('hover:enter', () => this.openSelect('Выберите жанр', GENRES, 'genre', '.filter-genre', 'Жанр: '));
             header.find('.filter-sort').on('hover:enter', () => this.openSelect('Сортировка', SORTS, 'sort', '.filter-sort', 'Сортировка: '));
             header.find('.filter-lang').on('hover:enter', () => this.openSelect('Страна / Оригинал', LANGS, 'lang', '.filter-lang', 'Язык: '));
@@ -408,32 +425,41 @@
             const dateGteKey = isMovie ? 'primaryReleaseDateGte' : 'firstAirDateGte';
             const dateLteKey = isMovie ? 'primaryReleaseDateLte' : 'firstAirDateLte';
 
+            let gteDate = '';
+            let lteDate = '';
+
             if (isNewSeasons) {
-                params.push(`${dateLteKey}=${encodeURIComponent(today)}`);
+                // Для новых сезонов сериал должен был стартовать не позже сегодняшнего дня
+                lteDate = today;
                 if (filters.year === 'range') {
-                    if (filters.yearFrom) params.push(`${dateGteKey}=${encodeURIComponent(filters.yearFrom + '-01-01')}`);
-                    if (filters.yearTo) params.push(`${dateLteKey}=${encodeURIComponent(filters.yearTo + '-12-31')}`);
+                    if (filters.yearFrom) gteDate = `${filters.yearFrom}-01-01`;
+                    if (filters.yearTo && `${filters.yearTo}-12-31` < today) {
+                        lteDate = `${filters.yearTo}-12-31`;
+                    }
                 } else if (filters.year !== 'all') {
-                    params.push(`${dateGteKey}=${encodeURIComponent(filters.year + '-01-01')}`);
-                    params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
+                    gteDate = `${filters.year}-01-01`;
+                    if (`${filters.year}-12-31` < today) {
+                        lteDate = `${filters.year}-12-31`;
+                    }
                 }
             } else if (filters.year === 'range') {
                 if (filters.yearFrom) {
-                    const startDate = (filters.yearFrom === today.slice(0, 4)) ? today : `${filters.yearFrom}-01-01`;
-                    params.push(`${dateGteKey}=${encodeURIComponent(startDate)}`);
+                    gteDate = (filters.yearFrom === today.slice(0, 4)) ? today : `${filters.yearFrom}-01-01`;
                 } else {
-                    params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
+                    gteDate = today;
                 }
                 if (filters.yearTo) {
-                    params.push(`${dateLteKey}=${encodeURIComponent(filters.yearTo + '-12-31')}`);
+                    lteDate = `${filters.yearTo}-12-31`;
                 }
             } else if (filters.year === 'all') {
-                params.push(`${dateGteKey}=${encodeURIComponent(today)}`);
+                gteDate = today;
             } else {
-                const startDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
-                params.push(`${dateGteKey}=${encodeURIComponent(startDate)}`);
-                params.push(`${dateLteKey}=${encodeURIComponent(filters.year + '-12-31')}`);
+                gteDate = (filters.year === today.slice(0, 4)) ? today : `${filters.year}-01-01`;
+                lteDate = `${filters.year}-12-31`;
             }
+
+            if (gteDate) params.push(`${dateGteKey}=${encodeURIComponent(gteDate)}`);
+            if (lteDate) params.push(`${dateLteKey}=${encodeURIComponent(lteDate)}`);
 
             if (filters.genre !== 'all') {
                 params.push(`genre=${encodeURIComponent(filters.genre)}`);
