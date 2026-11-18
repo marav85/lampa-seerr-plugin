@@ -105,7 +105,7 @@
         let total_pages = 1;
         let loaded_pages = {};
         let prefetch_pages_target = Number(Lampa.Storage.get('seerr_prefetch_pages', '6'));
-        let max_auto_pages = prefetch_pages_target + 4;
+        let max_auto_pages = 25; // Глубина сканирования при строгих фильтрах (до 500 тайтлов)
 
         let filters = SESSION_CACHE.state ? Object.assign({}, SESSION_CACHE.state.filters) : {
             type: 'movie',
@@ -474,6 +474,11 @@
                 params.push(`genre=${encodeURIComponent(filters.genre)}`);
             }
 
+            // Передаем минимальную оценку прямо в API Seerr, чтобы сервер сразу возвращал только подходящие карточки
+            if (filters.rating !== 'all') {
+                params.push(`voteAverageGte=${encodeURIComponent(filters.rating)}`);
+            }
+
             return `${domain}${endpoint}?${params.join('&')}`;
         };
 
@@ -738,12 +743,13 @@
                     this.prefetchBatch(4, Math.min(prefetch_pages_target, total_pages));
                 }
             }
-
-            if (items.length < 25 && page < Math.min(max_auto_pages, total_pages)) {
-                this.loadNextPage();
+            // Если карточек всё ещё мало (< 30) и мы не дошли до 25-й страницы — запускаем следующую пачку из 4 страниц
+            if (items.length < 30 && page < Math.min(max_auto_pages, total_pages)) {
+                this.prefetchBatch(page + 1, Math.min(page + 4, total_pages));
             } else if (items.length === 0 && page >= total_pages) {
                 body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
+
         };
 
         this.fetchTvSeasonInfo = function (tvId, cardEl) {
