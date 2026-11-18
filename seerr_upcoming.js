@@ -903,11 +903,14 @@
                     release_year: cardData.release_date ? cardData.release_date.slice(0, 4) : 'Скоро'
                 });
 
+                // Подтягиваем текст ближе к своей карточке и добавляем нижний отступ от следующего ряда
+                card.css('margin-bottom', '1.4em');
                 card.find('.card__title').css({
                     'white-space': 'nowrap',
                     'overflow': 'hidden',
                     'text-overflow': 'ellipsis',
-                    'display': 'block'
+                    'display': 'block',
+                    'margin-top': '0.35em'
                 });
 
                 if (showRating && cardData.vote_average > 0) {
@@ -1118,9 +1121,19 @@
         $('.menu .menu__list').eq(0).append(menuItem);
 
         if (Lampa.Storage.get('start_page', '') === PLUGIN_ID) {
-            setTimeout(() => {
-                Lampa.Activity.replace({ url: '', title: PLUGIN_NAME, component: PLUGIN_ID, page: 1 });
-            }, 300);
+            let redirected = false;
+            const onFirstActivity = (e) => {
+                if (e.type === 'start' && !redirected) {
+                    redirected = true;
+                    Lampa.Listener.remove('activity', onFirstActivity);
+                    if (e.component !== PLUGIN_ID) {
+                        setTimeout(() => {
+                            Lampa.Activity.replace({ url: '', title: PLUGIN_NAME, component: PLUGIN_ID, page: 1 });
+                        }, 50);
+                    }
+                }
+            };
+            Lampa.Listener.follow('activity', onFirstActivity);
         }
     }
 
