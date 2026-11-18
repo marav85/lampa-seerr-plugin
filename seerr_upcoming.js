@@ -305,8 +305,9 @@
             if (renderedCount < allItemsData.length) {
                 this.renderNextChunk(RENDER_CHUNK);
             }
-            if ((allItemsData.length - renderedCount) < RENDER_CHUNK && page < total_pages) {
-                this.prefetchBatch(page + 1, Math.min(page + 3, total_pages));
+            // При ручной прокрутке подгружаем следующие 4 страницы без жесткого лимита в 40 страниц
+            if ((allItemsData.length - renderedCount) < (RENDER_CHUNK * 2) && page < total_pages) {
+                this.prefetchBatch(page + 1, Math.min(page + 4, total_pages));
             }
         };
 
@@ -786,6 +787,10 @@
                     if (isReleased) {
                         const relDate = el.releaseDate || el.firstAirDate || '';
                         if (!relDate || relDate > today) return false;
+                        // Отсекаем пустые фестивальные заглушки без зрителей и популярности, чтобы лента сразу уходила вглубь месяцев
+                        const votes = Number(el.voteCount || 0);
+                        const pop = Number(el.popularity || 0);
+                        if (votes === 0 && pop < 2) return false;
                     } else if (itemType === 'movie') {
                         const relDate = el.releaseDate || '';
                         if (relDate && relDate < today) return false;
