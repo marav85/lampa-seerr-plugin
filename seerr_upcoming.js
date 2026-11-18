@@ -16,11 +16,12 @@
 
     const HISTORY_KEY = 'seerr_search_history';
     const MAX_HISTORY = 5;
-        const CUB_QUALITY_MAP = {};
+    const CUB_QUALITY_MAP = {};
     const QUALITY_LABELS = {
         bd: { text: 'Blu-Ray', color: '#27ae60' },
-        webdl: { text: 'WEB-Rip', color: '#2980b9' },
-        hdrip: { text: 'HD-Rip', color: '#8e44ad' },
+        webdl: { text: 'WEB-DL', color: '#2980b9' },
+        update: { text: '4K / UHD', color: '#8e44ad' },
+        hdrip: { text: 'HD-Rip', color: '#16a085' },
         dvdrip: { text: 'DVD-Rip', color: '#d35400' }
     };
 
@@ -30,10 +31,10 @@
             if (!account || !account.token || !Lampa.Manifest || !Lampa.Manifest.cub_domain) return;
 
             const baseUrl = Lampa.Utils.protocol() + Lampa.Manifest.cub_domain + '/api/quality/';
-            const categories = ['dvdrip', 'hdrip', 'webdl', 'bd']; // Порядок от низкого к высокому, чтобы лучшее перезаписывало худшее
+            const categories = ['dvdrip', 'hdrip', 'webdl', 'bd', 'update'];
 
             categories.forEach((cat) => {
-                [1, 2, 3].forEach((p) => {
+                for (let p = 1; p <= 5; p++) {
                     const req = new Lampa.Reguest();
                     req.silent(`${baseUrl}${cat}/${p}`, (json) => {
                         if (json && Array.isArray(json.results)) {
@@ -46,10 +47,112 @@
                     }, () => {}, false, {
                         headers: { token: account.token }
                     });
-                });
+                }
             });
         } catch (e) {}
     }
+
+    // Очередь тихой проверки качества через настроенный в Lampa парсер Jackett
+    const JACKETT_QUEUE = [];
+    let JACKETT_ACTIVE = 0;
+    const JACKETT_MAX_CONCURRENT = 2;
+
+    function detectBestQualityFromResults(results) {
+        let bestRank = 0;
+        let bestBadge = null;
+
+        const candidates = [
+            { rank: 6, regex: /\b(2160p|4k|uhd)\b/i, text: '4K UHD', color: '#8e44ad' },
+            { rank: 5, regex: /\b(bdremux|blu-?ray|bdrip)\b/i, text: 'Blu-Ray', color: '#27ae60' },
+            { rank: 4, regex: /\b(web-?dl)\b/i, text: 'WEB-DL', color: '#2980b9' },
+            { rank: 3, regex: /\b(1080p)\b/i, text: '1080p', color: '#2980b9' },
+            { rank: 2, regex: /\b(web-?dlrip|webrip)\b/i, text: 'WEB-DLRip', color: '#3498db' },
+            { rank: 1, regex: /\b(hdrip|720p)\b/i, text: 'HD-Rip', color: '#16a085' }
+        ];
+
+        results.forEach((r) => {
+            const title = (r && r.Title) ? String(r.Title) : '';
+            if (!title) return;
+
+            for (let i = 0; i < candidates.length; i++) {
+                const c = candidates.at(i);
+                if (c.rank > bestRank && c.regex.test(title)) {
+                    bestRank = c.rank;
+                    bestBadge = { text: c.text, color: c.color };
+                    break;
+                }
+            }
+        });
+
+        return bestBadge;
+    }
+
+    function processJackettQueue() {
+        if (JACKETT_ACTIVE >= JACKETT_MAX_CONCURRENT || JACKETT_QUEUE.length === 0) return;
+
+        const task = JACKETT_QUEUE.shift();
+        if (!task) return;
+
+        if (SESSION_CACHE.jackettQuality && SESSION_CACHE.jackettQuality[task.cacheKey] !== undefined) {
+            const cached = SESSION_CACHE.jackettQuality[task.cacheKey];
+            if (cached) task.onFound(cached);
+            processJackettQueue();
+            return;
+        }
+
+        let rawHost = Lampa.Storage.get('jackett_url', '');
+        const apiKey = Lampa.Storage.get('jackett_key', '1');
+        if (!rawHost) return;
+
+        if (!/^https?:\/\//i.test(rawHost)) {
+            rawHost = 'https://' + rawHost;
+        }
+        rawHost = rawHost.replace(/\/+$/, '');
+
+        JACKETT_ACTIVE++;
+        const query = encodeURIComponent(`${task.title} ${task.year}`.trim());
+        const url = `${rawHost}/api/v2.0/indexers/all/results?apikey=${encodeURIComponent(apiKey)}&Query=${query}`;
+
+        const req = new Lampa.Reguest();
+        req.timeout(8000);
+        req.silent(url, (json) => {
+            JACKETT_ACTIVE--;
+            if (!SESSION_CACHE.jackettQuality) SESSION_CACHE.jackettQuality = {};
+
+            const list = (json && Array.isArray(json.Results)) ? json.Results : [];
+            const badge = detectBestQualityFromResults(list);
+            SESSION_CACHE.jackettQuality[task.cacheKey] = badge || null;
+
+            if (badge) task.onFound(badge);
+            processJackettQueue();
+        }, () => {
+            JACKETT_ACTIVE--;
+            if (!SESSION_CACHE.jackettQuality) SESSION_CACHE.jackettQuality = {};
+            SESSION_CACHE.jackettQuality[task.cacheKey] = null;
+            processJackettQueue();
+        });
+    }
+
+    function enqueueJackettQualityCheck(cardData, onFound) {
+        if (!SESSION_CACHE.jackettQuality) SESSION_CACHE.jackettQuality = {};
+        const cacheKey = `${cardData.media_type}_${cardData.id}`;
+
+        if (SESSION_CACHE.jackettQuality[cacheKey] !== undefined) {
+            const cached = SESSION_CACHE.jackettQuality[cacheKey];
+            if (cached) onFound(cached);
+            return;
+        }
+
+        const year = cardData.release_date ? cardData.release_date.slice(0, 4) : '';
+        JACKETT_QUEUE.push({
+            cacheKey: cacheKey,
+            title: cardData.title || cardData.original_title || '',
+            year: year,
+            onFound: onFound
+        });
+        processJackettQueue();
+    }
+
 
 
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
@@ -1022,11 +1125,23 @@
                 }
 
                 // Бейдж качества из CUB (правый нижний угол постера)
-                if (showQuality && CUB_QUALITY_MAP[cardData.id]) {
-                    const q = CUB_QUALITY_MAP[cardData.id];
-                    card.find('.card__view').append(
-                        `<div class="seerr-quality-badge" style="background: ${q.color}; color: #fff; font-weight: 700; font-size: 0.78em; padding: 0.25em 0.5em; border-radius: 0.3em; position: absolute; bottom: 0.5em; right: 0.5em; z-index: 2;">${q.text}</div>`
-                    );
+                // Бейдж качества (сначала мгновенно из CUB, если нет и релиз вышел — проверяем через Jackett)
+                if (showQuality) {
+                    const renderQualityBadge = (q) => {
+                        if (!q || card.find('.seerr-quality-badge').length > 0) return;
+                        card.find('.card__view').append(
+                            `<div class="seerr-quality-badge" style="background: ${q.color}; color: #fff; font-weight: 700; font-size: 0.78em; padding: 0.25em 0.5em; border-radius: 0.3em; position: absolute; bottom: 0.5em; right: 0.5em; z-index: 2;">${q.text}</div>`
+                        );
+                    };
+
+                    if (CUB_QUALITY_MAP[cardData.id]) {
+                        renderQualityBadge(CUB_QUALITY_MAP[cardData.id]);
+                    } else {
+                        const today = new Date().toISOString().slice(0, 10);
+                        if (cardData.release_date && cardData.release_date <= today) {
+                            enqueueJackettQualityCheck(cardData, renderQualityBadge);
+                        }
+                    }
                 }
 
                 const img = card.find('.card__img');
