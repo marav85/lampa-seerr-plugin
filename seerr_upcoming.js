@@ -246,7 +246,7 @@
         let loaded_pages = {};
         let pending_requests = 0;
         let prefetch_pages_target = Number(Lampa.Storage.get('seerr_prefetch_pages', '6'));
-        let max_auto_pages = 25;
+        let max_auto_pages = 40;
 
         const defaultType = Lampa.Storage.get('seerr_default_type', 'all');
         const defaultSort = Lampa.Storage.get('seerr_default_sort', 'release_date.asc');
@@ -981,7 +981,7 @@
                 }
             }
 
-            if (items.length < 30 && page < Math.min(max_auto_pages, total_pages)) {
+            if (items.length < 45 && page < Math.min(max_auto_pages, total_pages)) {
                 this.prefetchBatch(page + 1, Math.min(page + 4, total_pages));
             } else if (items.length === 0 && pending_requests === 0 && body.find('.seerr-empty-msg').length === 0) {
                 body.append('<div class="empty__title seerr-empty-msg" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
