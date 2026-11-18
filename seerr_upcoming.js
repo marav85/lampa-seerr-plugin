@@ -16,6 +16,41 @@
 
     const HISTORY_KEY = 'seerr_search_history';
     const MAX_HISTORY = 5;
+        const CUB_QUALITY_MAP = {};
+    const QUALITY_LABELS = {
+        bd: { text: 'Blu-Ray', color: '#27ae60' },
+        webdl: { text: 'WEB-Rip', color: '#2980b9' },
+        hdrip: { text: 'HD-Rip', color: '#8e44ad' },
+        dvdrip: { text: 'DVD-Rip', color: '#d35400' }
+    };
+
+    function preloadCubQuality() {
+        try {
+            const account = Lampa.Storage.get('account', '{}');
+            if (!account || !account.token || !Lampa.Manifest || !Lampa.Manifest.cub_domain) return;
+
+            const baseUrl = Lampa.Utils.protocol() + Lampa.Manifest.cub_domain + '/api/quality/';
+            const categories = ['dvdrip', 'hdrip', 'webdl', 'bd']; // Порядок от низкого к высокому, чтобы лучшее перезаписывало худшее
+
+            categories.forEach((cat) => {
+                [1, 2, 3].forEach((p) => {
+                    const req = new Lampa.Reguest();
+                    req.silent(`${baseUrl}${cat}/${p}`, (json) => {
+                        if (json && Array.isArray(json.results)) {
+                            json.results.forEach((item) => {
+                                if (item && item.id) {
+                                    CUB_QUALITY_MAP[item.id] = QUALITY_LABELS[cat];
+                                }
+                            });
+                        }
+                    }, () => {}, false, {
+                        headers: { token: account.token }
+                    });
+                });
+            });
+        } catch (e) {}
+    }
+
 
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
 
@@ -877,6 +912,7 @@
             });
         };
         this.buildCards = function (results) {
+            const showQuality = Lampa.Storage.get('seerr_show_quality', true);
             const showGenres = Lampa.Storage.get('seerr_show_genres', true);
             const showSeasons = Lampa.Storage.get('seerr_show_seasons', true);
             const showRating = Lampa.Storage.get('seerr_show_rating', true);
@@ -951,6 +987,14 @@
 
                 if (showSeasons && itemMethod === 'tv') {
                     this.fetchTvSeasonInfo(cardData.id, card);
+                }
+
+                // Бейдж качества из CUB (правый нижний угол постера)
+                if (showQuality && CUB_QUALITY_MAP[cardData.id]) {
+                    const q = CUB_QUALITY_MAP[cardData.id];
+                    card.find('.card__view').append(
+                        `<div class="seerr-quality-badge" style="background: ${q.color}; color: #fff; font-weight: 700; font-size: 0.78em; padding: 0.25em 0.5em; border-radius: 0.3em; position: absolute; bottom: 0.5em; right: 0.5em; z-index: 2;">${q.text}</div>`
+                    );
                 }
 
                 const img = card.find('.card__img');
@@ -1098,6 +1142,14 @@
             param: { name: 'seerr_show_rating', type: 'trigger', default: true },
             field: { name: 'Показывать рейтинг', description: 'Выводить оценку TMDB в углу постера' }
         });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_show_quality', type: 'trigger', default: true },
+            field: { name: 'Показывать качество (CUB)', description: 'Отображать бейдж качества (WEB-Rip, Blu-Ray), если релиз уже появился в сети' }
+        });
+
+        preloadCubQuality();
 
         try {
             const startParam = Lampa.Params && Lampa.Params.values && Lampa.Params.values.start_page;
