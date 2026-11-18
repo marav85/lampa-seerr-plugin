@@ -95,6 +95,7 @@
 
     const SORTS = {
         'release_date.asc': 'Ближайший релиз',
+        'released.desc': 'Вышедшие (недавние)',
         'popularity.desc': 'Популярные',
         'next_episode.asc': 'Ближайшая серия',
         'release_date.desc': 'Дальний релиз',
@@ -434,11 +435,13 @@
             this.loadSpecificPage(2, true);
             this.loadSpecificPage(3, true);
         };
-        this.buildSingleUrl = function (mediaType, targetPage) {
+
+                this.buildSingleUrl = function (mediaType, targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const today = new Date().toISOString().slice(0, 10);
             const isMovie = mediaType === 'movie';
             const isNewSeasons = filters.type === 'tv_upcoming';
+            const isReleased = filters.sort === 'released.desc';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
             let sortValue = filters.sort;
@@ -446,7 +449,7 @@
                 sortValue = 'popularity.desc';
             } else if (sortValue === 'release_date.asc') {
                 sortValue = isMovie ? 'primary_release_date.asc' : 'first_air_date.asc';
-            } else if (sortValue === 'release_date.desc') {
+            } else if (sortValue === 'release_date.desc' || sortValue === 'released.desc') {
                 sortValue = isMovie ? 'primary_release_date.desc' : 'first_air_date.desc';
             } else if (sortValue === 'original_title.asc') {
                 sortValue = isMovie ? 'original_title.asc' : 'original_name.asc';
@@ -467,7 +470,22 @@
             let gteDate = '';
             let lteDate = '';
 
-            if (isNewSeasons) {
+            if (isReleased) {
+                // Режим "Вышедшие": берем релизы до сегодняшнего дня и идем в прошлое
+                lteDate = today;
+                if (filters.year === 'range') {
+                    if (filters.yearFrom) gteDate = `${filters.yearFrom}-01-01`;
+                    if (filters.yearTo && `${filters.yearTo}-12-31` < today) {
+                        lteDate = `${filters.yearTo}-12-31`;
+                    }
+                } else if (filters.year !== 'all') {
+                    gteDate = `${filters.year}-01-01`;
+                    if (`${filters.year}-12-31` < today) {
+                        lteDate = `${filters.year}-12-31`;
+                    }
+                }
+                if (gteDate && lteDate && gteDate > lteDate) gteDate = '';
+            } else if (isNewSeasons) {
                 lteDate = today;
                 if (filters.year === 'range') {
                     if (filters.yearFrom) gteDate = `${filters.yearFrom}-01-01`;
@@ -612,6 +630,7 @@
             const today = new Date().toISOString().slice(0, 10);
             const isSearch = Boolean(filters.search);
             const minRating = filters.rating !== 'all' ? Number(filters.rating) : 0;
+            const isReleased = filters.sort === 'released.desc';
 
             return rawResults.filter((el) => {
                 const itemType = el._resolvedType || el.mediaType || (filters.type === 'movie' ? 'movie' : 'tv');
@@ -641,7 +660,15 @@
                     const relDate = el.releaseDate || el.firstAirDate || '';
                     const relYear = relDate ? relDate.slice(0, 4) : '';
 
-                    if (filters.type !== 'tv_upcoming') {
+                    if (isReleased) {
+                        if (!relDate || relDate > today) return false;
+                        if (filters.year === 'range') {
+                            if (filters.yearFrom && Number(relYear) < Number(filters.yearFrom)) return false;
+                            if (filters.yearTo && Number(relYear) > Number(filters.yearTo)) return false;
+                        } else if (filters.year !== 'all' && relYear !== filters.year) {
+                            return false;
+                        }
+                    } else if (filters.type !== 'tv_upcoming') {
                         if (filters.year === 'range') {
                             if (!relYear) return false;
                             if (filters.yearFrom && Number(relYear) < Number(filters.yearFrom)) return false;
@@ -663,7 +690,10 @@
                         }
                     }
                 } else {
-                    if (itemType === 'movie') {
+                    if (isReleased) {
+                        const relDate = el.releaseDate || el.firstAirDate || '';
+                        if (!relDate || relDate > today) return false;
+                    } else if (itemType === 'movie') {
                         const relDate = el.releaseDate || '';
                         if (relDate && relDate < today) return false;
                     }
@@ -802,7 +832,9 @@
                 arr.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
             } else if (filters.sort === 'vote_average.desc') {
                 arr.sort((a, b) => (b.voteAverage || 0) - (a.voteAverage || 0));
-            }
+            } else if (filters.sort === 'release_date.desc' || filters.sort === 'released.desc') {
+                arr.sort((a, b) => (b.releaseDate || b.firstAirDate || '0000-01-01').localeCompare(a.releaseDate || a.firstAirDate || '0000-01-01'));
+            } 
         };
 
         this.applyFilteredResults = function (filtered, append, currentPage) {
