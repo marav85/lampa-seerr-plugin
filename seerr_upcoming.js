@@ -20,6 +20,7 @@
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
 
     const TYPES = {
+        all: 'Фильмы + Сериалы',
         movie: 'Фильмы',
         tv: 'Сериалы (новые)',
         tv_upcoming: 'Сериалы: новые сезоны'
@@ -58,14 +59,15 @@
     };
 
     const SORTS = {
+        'release_date.asc': 'Ближайший релиз',
         'popularity.desc': 'Популярные',
         'next_episode.asc': 'Ближайшая серия',
-        'release_date.asc': 'Ближайший релиз',
         'release_date.desc': 'Дальний релиз',
         'vote_average.desc': 'По рейтингу',
         'vote_count.desc': 'По оценкам',
         'original_title.asc': 'По названию'
     };
+
     function getYearsList() {
         const currentYear = new Date().getFullYear();
         const years = { all: 'Все годы' };
@@ -91,7 +93,6 @@
         if (list.length > MAX_HISTORY) list = list.slice(0, MAX_HISTORY);
         Lampa.Storage.set(HISTORY_KEY, list);
     }
-
     function SeerrCatalogComponent(object) {
         const network = new Lampa.Reguest();
         const scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
@@ -104,17 +105,21 @@
         let page = 1;
         let total_pages = 1;
         let loaded_pages = {};
+        let pending_requests = 0;
         let prefetch_pages_target = Number(Lampa.Storage.get('seerr_prefetch_pages', '6'));
-        let max_auto_pages = 25; // Глубина сканирования при строгих фильтрах (до 500 тайтлов)
+        let max_auto_pages = 25;
+
+        const defaultType = Lampa.Storage.get('seerr_default_type', 'all');
+        const defaultSort = Lampa.Storage.get('seerr_default_sort', 'release_date.asc');
 
         let filters = SESSION_CACHE.state ? Object.assign({}, SESSION_CACHE.state.filters) : {
-            type: 'movie',
+            type: defaultType,
             genre: 'all',
             year: 'all',
             yearFrom: '',
             yearTo: '',
             rating: 'all',
-            sort: 'popularity.desc',
+            sort: defaultSort,
             lang: 'all',
             search: ''
         };
@@ -198,11 +203,11 @@
             const header = $(`
                 <div class="seerr-filter-bar" style="padding: 1.5em 1.5em 0.5em 1.5em; display: flex; align-items: center; gap: 0.7em; flex-wrap: wrap;">
                     <div class="simple-button selector filter-search" style="${btnStyle}">${searchLabel}</div>
-                    <div class="simple-button selector filter-type" style="${btnStyle}">Тип: ${TYPES[filters.type] || 'Фильмы'}</div>
+                    <div class="simple-button selector filter-type" style="${btnStyle}">Тип: ${TYPES[filters.type] || 'Фильмы + Сериалы'}</div>
                     <div class="simple-button selector filter-genre" style="${btnStyle}">Жанр: ${GENRES[filters.genre] || 'Все жанры'}</div>
                     <div class="simple-button selector filter-year" style="${btnStyle}">${getYearButtonText()}</div>
                     <div class="simple-button selector filter-rating" style="${btnStyle}">Оценка: ${RATINGS[filters.rating] || 'Все оценки'}</div>
-                    <div class="simple-button selector filter-sort" style="${sortStyle}">Сортировка: ${SORTS[filters.sort] || 'Популярные'}</div>
+                    <div class="simple-button selector filter-sort" style="${sortStyle}">Сортировка: ${SORTS[filters.sort] || 'Ближайший релиз'}</div>
                     <div class="simple-button selector filter-lang" style="${btnStyle}">Язык: ${LANGS[filters.lang] || 'Все страны'}</div>
                 </div>
             `);
@@ -385,6 +390,7 @@
             items = [];
             loaded_pages = { 1: true, 2: true, 3: true };
             last_focused_index = 0;
+            pending_requests = 0;
             SESSION_CACHE.state = null;
             body.empty();
             scroll.reset();
@@ -393,15 +399,10 @@
             this.loadSpecificPage(2, true);
             this.loadSpecificPage(3, true);
         };
-        this.buildUrl = function (targetPage) {
+        this.buildSingleUrl = function (mediaType, targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
-
-            if (filters.search) {
-                return `${domain}/api/v1/search?query=${encodeURIComponent(filters.search)}&page=${targetPage}`;
-            }
-
             const today = new Date().toISOString().slice(0, 10);
-            const isMovie = filters.type === 'movie';
+            const isMovie = mediaType === 'movie';
             const isNewSeasons = filters.type === 'tv_upcoming';
             const endpoint = isMovie ? '/api/v1/discover/movies' : '/api/v1/discover/tv';
             
@@ -444,21 +445,15 @@
                         lteDate = `${filters.year}-12-31`;
                     }
                 }
-                if (gteDate && lteDate && gteDate > lteDate) {
-                    gteDate = '';
-                }
+                if (gteDate && lteDate && gteDate > lteDate) gteDate = '';
             } else if (filters.year === 'range') {
                 if (filters.yearFrom) {
                     gteDate = (filters.yearFrom === today.slice(0, 4)) ? today : `${filters.yearFrom}-01-01`;
                 } else {
                     gteDate = today;
                 }
-                if (filters.yearTo) {
-                    lteDate = `${filters.yearTo}-12-31`;
-                }
-                if (gteDate && lteDate && gteDate > lteDate) {
-                    lteDate = '';
-                }
+                if (filters.yearTo) lteDate = `${filters.yearTo}-12-31`;
+                if (gteDate && lteDate && gteDate > lteDate) lteDate = '';
             } else if (filters.year === 'all') {
                 gteDate = today;
             } else {
@@ -474,7 +469,6 @@
                 params.push(`genre=${encodeURIComponent(filters.genre)}`);
             }
 
-            // Передаем минимальную оценку прямо в API Seerr, чтобы сервер сразу возвращал только подходящие карточки
             if (filters.rating !== 'all') {
                 params.push(`voteAverageGte=${encodeURIComponent(filters.rating)}`);
             }
@@ -482,8 +476,32 @@
             return `${domain}${endpoint}?${params.join('&')}`;
         };
 
-        this.loadData = function (append) {
-            this.loadSpecificPage(page, append);
+        this.fetchJson = function (url, apiKey, callback) {
+            const cached = SESSION_CACHE.data[url];
+            if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+                callback(null, cached);
+                return;
+            }
+
+            const req = new Lampa.Reguest();
+            req.timeout(10000);
+            req.native(url, (json) => {
+                if (json && Array.isArray(json.results)) {
+                    const entry = {
+                        results: json.results,
+                        totalPages: json.totalPages || 1,
+                        timestamp: Date.now()
+                    };
+                    SESSION_CACHE.data[url] = entry;
+                    callback(null, entry);
+                } else {
+                    callback(null, { results: [], totalPages: 1 });
+                }
+            }, (err) => {
+                callback(err || true, { results: [], totalPages: 1 });
+            }, false, {
+                headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
+            });
         };
 
         this.loadSpecificPage = function (targetPage, append) {
@@ -496,45 +514,61 @@
                 return;
             }
 
-            const currentPage = targetPage;
-            const url = this.buildUrl(currentPage);
+            pending_requests++;
 
-            const cached = SESSION_CACHE.data[url];
-            if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+            const finishRequest = (results, maxPages, hasError) => {
+                pending_requests = Math.max(0, pending_requests - 1);
                 this.activity.loader(false);
-                total_pages = cached.totalPages;
-                this.handleResults(cached.results, append, currentPage);
+                if (maxPages > total_pages) total_pages = maxPages;
+
+                if (hasError && !append && items.length === 0 && pending_requests === 0) {
+                    Lampa.Noty.show('Ошибка подключения к Seerr');
+                    this.start();
+                    return;
+                }
+
+                this.handleResults(results, append, targetPage);
+            };
+
+            if (filters.search) {
+                const searchUrl = `${domain}/api/v1/search?query=${encodeURIComponent(filters.search)}&page=${targetPage}`;
+                this.fetchJson(searchUrl, apiKey, (err, data) => {
+                    finishRequest(data.results, data.totalPages, Boolean(err));
+                });
                 return;
             }
 
-            const req = new Lampa.Reguest();
-            req.timeout(10000);
-            req.native(url, (json) => {
-                this.activity.loader(false);
+            // Режим "Фильмы + Сериалы": грузим оба потока параллельно и объединяем
+            if (filters.type === 'all') {
+                const movieUrl = this.buildSingleUrl('movie', targetPage);
+                const tvUrl = this.buildSingleUrl('tv', targetPage);
+                let done = 0;
+                let combined = [];
+                let maxP = 1;
+                let errCount = 0;
 
-                if (json && json.results && json.results.length > 0) {
-                    total_pages = json.totalPages || 1;
-                    SESSION_CACHE.data[url] = {
-                        results: json.results,
-                        totalPages: total_pages,
-                        timestamp: Date.now()
-                    };
-                    this.handleResults(json.results, append, currentPage);
-                } else if (!append) {
-                    body.append('<div class="empty__title" style="padding: 2em;">Ничего не найдено</div>');
-                    this.start();
-                }
-            }, (error) => {
-                this.activity.loader(false);
-                if (!append) {
-                    Lampa.Noty.show('Ошибка API Seerr: ' + (error.status || 'Сетевая ошибка'));
-                    this.start();
-                }
-            }, false, {
-                headers: {
-                    'X-Api-Key': apiKey,
-                    'Accept': 'application/json'
-                }
+                const onPart = (mType) => (err, data) => {
+                    done++;
+                    if (err) errCount++;
+                    if (data.totalPages > maxP) maxP = data.totalPages;
+                    const tagged = (data.results || []).map(x => Object.assign({}, x, { _resolvedType: mType }));
+                    combined = combined.concat(tagged);
+
+                    if (done === 2) {
+                        finishRequest(combined, maxP, errCount === 2);
+                    }
+                };
+
+                this.fetchJson(movieUrl, apiKey, onPart('movie'));
+                this.fetchJson(tvUrl, apiKey, onPart('tv'));
+                return;
+            }
+
+            const singleType = filters.type === 'movie' ? 'movie' : 'tv';
+            const url = this.buildSingleUrl(singleType, targetPage);
+            this.fetchJson(url, apiKey, (err, data) => {
+                const tagged = (data.results || []).map(x => Object.assign({}, x, { _resolvedType: singleType }));
+                finishRequest(tagged, data.totalPages, Boolean(err));
             });
         };
         this.filterResults = function (rawResults) {
@@ -542,17 +576,22 @@
             const onlyRu = Lampa.Storage.get('seerr_only_ru', false);
             const today = new Date().toISOString().slice(0, 10);
             const isSearch = Boolean(filters.search);
-            const expectedMediaType = filters.type === 'movie' ? 'movie' : 'tv';
             const minRating = filters.rating !== 'all' ? Number(filters.rating) : 0;
 
             return rawResults.filter((el) => {
+                const itemType = el._resolvedType || el.mediaType || (filters.type === 'movie' ? 'movie' : 'tv');
+                if (itemType !== 'movie' && itemType !== 'tv') return false;
+
                 if (minRating > 0) {
                     const score = Number(el.voteAverage || 0);
                     if (score < minRating) return false;
                 }
 
                 if (isSearch) {
-                    if (el.mediaType && el.mediaType !== expectedMediaType) return false;
+                    if (filters.type !== 'all') {
+                        const expectedType = filters.type === 'movie' ? 'movie' : 'tv';
+                        if (itemType !== expectedType) return false;
+                    }
 
                     if (filters.genre !== 'all') {
                         if (!Array.isArray(el.genreIds) || !el.genreIds.includes(Number(filters.genre))) {
@@ -589,7 +628,7 @@
                         }
                     }
                 } else {
-                    if (filters.type === 'movie') {
+                    if (itemType === 'movie') {
                         const relDate = el.releaseDate || '';
                         if (relDate && relDate < today) return false;
                     }
@@ -609,7 +648,7 @@
 
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
-            const needDetailsCheck = (filters.type === 'tv_upcoming') || (filters.type === 'tv' && filters.sort === 'next_episode.asc');
+            const needDetailsCheck = (filters.type === 'tv_upcoming') || (filters.sort === 'next_episode.asc');
 
             if (needDetailsCheck && filtered.length > 0) {
                 const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
@@ -618,16 +657,18 @@
 
                 let checkedCount = 0;
                 const passedMap = {};
+                const minFreshDate = `${new Date().getFullYear() - 1}-01-01`; // Отсекаем заброшенные сериалы старше 1.5 лет
 
                 const checkComplete = () => {
                     checkedCount++;
                     if (checkedCount === filtered.length) {
-                        const resultList = filtered.filter(el => passedMap[el.id]);
+                        const resultList = filtered.filter(el => passedMap[`${el._resolvedType || 'tv'}_${el.id}`]);
                         this.applyFilteredResults(resultList, append, currentPage);
                     }
                 };
 
                 const evaluateDetails = (item, details) => {
+                    const key = `${item._resolvedType || 'tv'}_${item.id}`;
                     if (!details || !Array.isArray(details.seasons)) return;
 
                     const regularSeasons = details.seasons.filter(s => s.seasonNumber > 0);
@@ -672,13 +713,25 @@
                         if (totalEps > 0 && airedEps >= totalEps) return;
                         if (filters.sort === 'next_episode.asc' && item._nextAirDate === '9999-12-31') return;
 
-                        passedMap[item.id] = true;
+                        // Защита от старых заброшенных сериалов (например, 2017 года без новых серий)
+                        const lastActivityDate = (details.lastEpisodeToAir && details.lastEpisodeToAir.airDate) || seasonObj.airDate || '';
+                        if (!details.nextEpisodeToAir && lastActivityDate && lastActivityDate < minFreshDate) return;
+
+                        passedMap[key] = true;
                     } else {
-                        passedMap[item.id] = true;
+                        passedMap[key] = true;
                     }
                 };
 
                 filtered.forEach((item) => {
+                    const mType = item._resolvedType || item.mediaType || 'tv';
+                    if (mType === 'movie') {
+                        item._nextAirDate = item.releaseDate || '9999-12-31';
+                        passedMap[`movie_${item.id}`] = true;
+                        checkComplete();
+                        return;
+                    }
+
                     if (SESSION_CACHE.tvDetails[item.id]) {
                         evaluateDetails(item, SESSION_CACHE.tvDetails[item.id]);
                         checkComplete();
@@ -703,6 +756,20 @@
 
             this.applyFilteredResults(filtered, append, currentPage);
         };
+        this.sortItemsArray = function (arr) {
+            if (filters.sort === 'next_episode.asc') {
+                arr.sort((a, b) => (a._nextAirDate || '9999-12-31').localeCompare(b._nextAirDate || '9999-12-31'));
+            } else if (filters.sort === 'release_date.asc') {
+                arr.sort((a, b) => (a.releaseDate || a.firstAirDate || '9999-12-31').localeCompare(b.releaseDate || b.firstAirDate || '9999-12-31'));
+            } else if (filters.sort === 'release_date.desc') {
+                arr.sort((a, b) => (b.releaseDate || b.firstAirDate || '0000-01-01').localeCompare(a.releaseDate || a.firstAirDate || '0000-01-01'));
+            } else if (filters.sort === 'popularity.desc') {
+                arr.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+            } else if (filters.sort === 'vote_average.desc') {
+                arr.sort((a, b) => (b.voteAverage || 0) - (a.voteAverage || 0));
+            }
+        };
+
         this.applyFilteredResults = function (filtered, append, currentPage) {
             if (!SESSION_CACHE.state) {
                 SESSION_CACHE.state = {
@@ -719,17 +786,17 @@
             }
             SESSION_CACHE.state.loaded_pages = Object.assign({}, loaded_pages);
 
-            // Защита от дублей при параллельной загрузке страниц
-            const existingIds = new Set(SESSION_CACHE.state.itemsData.map(x => x.id));
-            const uniqueNew = filtered.filter(x => !existingIds.has(x.id));
+            const existingKeys = new Set(SESSION_CACHE.state.itemsData.map(x => `${x._resolvedType || x.mediaType || 'm'}_${x.id}`));
+            const uniqueNew = filtered.filter(x => !existingKeys.has(`${x._resolvedType || x.mediaType || 'm'}_${x.id}`));
             SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(uniqueNew);
 
-            if (filters.sort === 'next_episode.asc' && SESSION_CACHE.state.itemsData.length > 1) {
-                SESSION_CACHE.state.itemsData.sort((a, b) => {
-                    const dateA = a._nextAirDate || '9999-12-31';
-                    const dateB = b._nextAirDate || '9999-12-31';
-                    return dateA.localeCompare(dateB);
-                });
+            if (SESSION_CACHE.state.itemsData.length > 0) {
+                body.find('.seerr-empty-msg').remove();
+            }
+
+            // Для объединенного режима "Фильмы + Сериалы" или сортировки по ближайшей серии пересортировываем общий список
+            if ((filters.type === 'all' || filters.sort === 'next_episode.asc') && SESSION_CACHE.state.itemsData.length > 1) {
+                this.sortItemsArray(SESSION_CACHE.state.itemsData);
                 items = [];
                 body.empty();
                 this.buildCards(SESSION_CACHE.state.itemsData);
@@ -743,13 +810,12 @@
                     this.prefetchBatch(4, Math.min(prefetch_pages_target, total_pages));
                 }
             }
-            // Если карточек всё ещё мало (< 30) и мы не дошли до 25-й страницы — запускаем следующую пачку из 4 страниц
+
             if (items.length < 30 && page < Math.min(max_auto_pages, total_pages)) {
                 this.prefetchBatch(page + 1, Math.min(page + 4, total_pages));
-            } else if (items.length === 0 && page >= total_pages) {
-                body.append('<div class="empty__title" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
+            } else if (items.length === 0 && pending_requests === 0 && body.find('.seerr-empty-msg').length === 0) {
+                body.append('<div class="empty__title seerr-empty-msg" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
-
         };
 
         this.fetchTvSeasonInfo = function (tvId, cardEl) {
@@ -811,13 +877,14 @@
             });
         };
         this.buildCards = function (results) {
-            const mediaMethod = filters.type === 'movie' ? 'movie' : 'tv';
             const showGenres = Lampa.Storage.get('seerr_show_genres', true);
             const showSeasons = Lampa.Storage.get('seerr_show_seasons', true);
             const showRating = Lampa.Storage.get('seerr_show_rating', true);
 
             results.forEach((element) => {
                 const currentIndex = items.length;
+                const itemMethod = element._resolvedType || element.mediaType || (filters.type === 'movie' ? 'movie' : 'tv');
+
                 const cardData = {
                     id: element.id,
                     title: element.title || element.name,
@@ -828,12 +895,19 @@
                     vote_average: element.voteAverage || 0,
                     overview: element.overview,
                     source: 'tmdb',
-                    media_type: mediaMethod
+                    media_type: itemMethod
                 };
 
                 const card = Lampa.Template.get('card', {
                     title: cardData.title,
                     release_year: cardData.release_date ? cardData.release_date.slice(0, 4) : 'Скоро'
+                });
+
+                card.find('.card__title').css({
+                    'white-space': 'nowrap',
+                    'overflow': 'hidden',
+                    'text-overflow': 'ellipsis',
+                    'display': 'block'
                 });
 
                 if (showRating && cardData.vote_average > 0) {
@@ -852,7 +926,7 @@
 
                     if (genreNames.length > 0) {
                         card.find('.card__title').after(
-                            `<div class="seerr-card-genres" style="font-size: 0.8em; color: rgba(255,255,255,0.6); margin-top: 0.25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${genreNames.join(', ')}</div>`
+                            `<div class="seerr-card-genres" style="font-size: 0.8em; color: rgba(255,255,255,0.6); margin-top: 0.2em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${genreNames.join(', ')}</div>`
                         );
                     }
                 }
@@ -872,7 +946,7 @@
                     }
                 }
 
-                if (showSeasons && mediaMethod === 'tv') {
+                if (showSeasons && itemMethod === 'tv') {
                     this.fetchTvSeasonInfo(cardData.id, card);
                 }
 
@@ -901,7 +975,7 @@
                         url: '',
                         component: 'full',
                         id: cardData.id,
-                        method: mediaMethod,
+                        method: itemMethod,
                         card: cardData,
                         source: 'tmdb'
                     });
@@ -948,7 +1022,6 @@
             html.remove();
         };
     }
-
     function initPlugin() {
         Lampa.Component.add(PLUGIN_ID, SeerrCatalogComponent);
 
@@ -972,25 +1045,37 @@
 
         Lampa.SettingsApi.addParam({
             component: PLUGIN_ID,
+            param: { name: 'seerr_default_type', type: 'select', values: TYPES, default: 'all' },
+            field: { name: 'Фильтр по умолчанию', description: 'Какой раздел открывать при запуске Seerr Upcoming' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
+            param: { name: 'seerr_default_sort', type: 'select', values: SORTS, default: 'release_date.asc' },
+            field: { name: 'Сортировка по умолчанию', description: 'Порядок карточек при открытии' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: PLUGIN_ID,
             param: {
                 name: 'seerr_prefetch_pages',
                 type: 'select',
-                values: { '3': '3 страницы (60 тайтлов)', '6': '6 страниц (120 тайтлов)', '9': '9 страниц (180 тайтлов)' },
+                values: { '3': '3 страницы', '6': '6 страниц', '9': '9 страниц' },
                 default: '6'
             },
-            field: { name: 'Глубина предзагрузки буфера', description: 'Сколько страниц загружать сразу при выборе фильтра' }
+            field: { name: 'Глубина предзагрузки буфера', description: 'Сколько страниц загружать сразу' }
         });
 
         Lampa.SettingsApi.addParam({
             component: PLUGIN_ID,
             param: { name: 'seerr_hide_no_poster', type: 'trigger', default: true },
-            field: { name: 'Скрывать без постера', description: 'Не показывать анонсы, у которых еще нет обложки' }
+            field: { name: 'Скрывать без постера', description: 'Не показывать анонсы без обложки' }
         });
 
         Lampa.SettingsApi.addParam({
             component: PLUGIN_ID,
             param: { name: 'seerr_only_ru', type: 'trigger', default: false },
-            field: { name: 'Только с русским переводом', description: 'Показывать только релизы с русским названием или описанием' }
+            field: { name: 'Только с русским переводом', description: 'Показывать только релизы с русским названием/описанием' }
         });
 
         Lampa.SettingsApi.addParam({
@@ -1002,14 +1087,21 @@
         Lampa.SettingsApi.addParam({
             component: PLUGIN_ID,
             param: { name: 'seerr_show_seasons', type: 'trigger', default: true },
-            field: { name: 'Показывать сезон и серии', description: 'Отображать номер сезона и количество вышедших серий для сериалов' }
+            field: { name: 'Показывать сезон и серии', description: 'Отображать номер сезона и количество вышедших серий' }
         });
 
         Lampa.SettingsApi.addParam({
             component: PLUGIN_ID,
             param: { name: 'seerr_show_rating', type: 'trigger', default: true },
-            field: { name: 'Показывать рейтинг', description: 'Выводить оценку TMDB в углу постера (если она уже есть)' }
+            field: { name: 'Показывать рейтинг', description: 'Выводить оценку TMDB в углу постера' }
         });
+
+        try {
+            const startParam = Lampa.Params && Lampa.Params.values && Lampa.Params.values.start_page;
+            if (startParam && typeof startParam === 'object') {
+                startParam[PLUGIN_ID] = PLUGIN_NAME;
+            }
+        } catch (e) {}
 
         const menuItem = $(`
             <li class="menu__item selector" data-action="${PLUGIN_ID}">
@@ -1024,6 +1116,12 @@
         });
 
         $('.menu .menu__list').eq(0).append(menuItem);
+
+        if (Lampa.Storage.get('start_page', '') === PLUGIN_ID) {
+            setTimeout(() => {
+                Lampa.Activity.replace({ url: '', title: PLUGIN_NAME, component: PLUGIN_ID, page: 1 });
+            }, 300);
+        }
     }
 
     if (window.appready) {
