@@ -10,150 +10,13 @@
     const SESSION_CACHE = {
         data: {},
         tvDetails: {},
+        jackettQuality: {},
         state: null
     };
     const CACHE_TTL = 10 * 60 * 1000;
 
     const HISTORY_KEY = 'seerr_search_history';
     const MAX_HISTORY = 5;
-    const CUB_QUALITY_MAP = {};
-    const QUALITY_LABELS = {
-        bd: { text: 'Blu-Ray', color: '#27ae60' },
-        webdl: { text: 'WEB-DL', color: '#2980b9' },
-        update: { text: '4K / UHD', color: '#8e44ad' },
-        hdrip: { text: 'HD-Rip', color: '#16a085' },
-        dvdrip: { text: 'DVD-Rip', color: '#d35400' }
-    };
-
-    function preloadCubQuality() {
-        try {
-            const account = Lampa.Storage.get('account', '{}');
-            if (!account || !account.token || !Lampa.Manifest || !Lampa.Manifest.cub_domain) return;
-
-            const baseUrl = Lampa.Utils.protocol() + Lampa.Manifest.cub_domain + '/api/quality/';
-            const categories = ['dvdrip', 'hdrip', 'webdl', 'bd', 'update'];
-
-            categories.forEach((cat) => {
-                for (let p = 1; p <= 5; p++) {
-                    const req = new Lampa.Reguest();
-                    req.silent(`${baseUrl}${cat}/${p}`, (json) => {
-                        if (json && Array.isArray(json.results)) {
-                            json.results.forEach((item) => {
-                                if (item && item.id) {
-                                    CUB_QUALITY_MAP[item.id] = QUALITY_LABELS[cat];
-                                }
-                            });
-                        }
-                    }, () => {}, false, {
-                        headers: { token: account.token }
-                    });
-                }
-            });
-        } catch (e) {}
-    }
-
-    // Очередь тихой проверки качества через настроенный в Lampa парсер Jackett
-    const JACKETT_QUEUE = [];
-    let JACKETT_ACTIVE = 0;
-    const JACKETT_MAX_CONCURRENT = 2;
-
-    function detectBestQualityFromResults(results) {
-        let bestRank = 0;
-        let bestBadge = null;
-
-        const candidates = [
-            { rank: 6, regex: /\b(2160p|4k|uhd)\b/i, text: '4K UHD', color: '#8e44ad' },
-            { rank: 5, regex: /\b(bdremux|blu-?ray|bdrip)\b/i, text: 'Blu-Ray', color: '#27ae60' },
-            { rank: 4, regex: /\b(web-?dl)\b/i, text: 'WEB-DL', color: '#2980b9' },
-            { rank: 3, regex: /\b(1080p)\b/i, text: '1080p', color: '#2980b9' },
-            { rank: 2, regex: /\b(web-?dlrip|webrip)\b/i, text: 'WEB-DLRip', color: '#3498db' },
-            { rank: 1, regex: /\b(hdrip|720p)\b/i, text: 'HD-Rip', color: '#16a085' }
-        ];
-
-        results.forEach((r) => {
-            const title = (r && r.Title) ? String(r.Title) : '';
-            if (!title) return;
-
-            for (let i = 0; i < candidates.length; i++) {
-                const c = candidates.at(i);
-                if (c.rank > bestRank && c.regex.test(title)) {
-                    bestRank = c.rank;
-                    bestBadge = { text: c.text, color: c.color };
-                    break;
-                }
-            }
-        });
-
-        return bestBadge;
-    }
-
-    function processJackettQueue() {
-        if (JACKETT_ACTIVE >= JACKETT_MAX_CONCURRENT || JACKETT_QUEUE.length === 0) return;
-
-        const task = JACKETT_QUEUE.shift();
-        if (!task) return;
-
-        if (SESSION_CACHE.jackettQuality && SESSION_CACHE.jackettQuality[task.cacheKey] !== undefined) {
-            const cached = SESSION_CACHE.jackettQuality[task.cacheKey];
-            if (cached) task.onFound(cached);
-            processJackettQueue();
-            return;
-        }
-
-        let rawHost = Lampa.Storage.get('jackett_url', '');
-        const apiKey = Lampa.Storage.get('jackett_key', '1');
-        if (!rawHost) return;
-
-        if (!/^https?:\/\//i.test(rawHost)) {
-            rawHost = 'https://' + rawHost;
-        }
-        rawHost = rawHost.replace(/\/+$/, '');
-
-        JACKETT_ACTIVE++;
-        const query = encodeURIComponent(`${task.title} ${task.year}`.trim());
-        const url = `${rawHost}/api/v2.0/indexers/all/results?apikey=${encodeURIComponent(apiKey)}&Query=${query}`;
-
-        const req = new Lampa.Reguest();
-        req.timeout(8000);
-        req.silent(url, (json) => {
-            JACKETT_ACTIVE--;
-            if (!SESSION_CACHE.jackettQuality) SESSION_CACHE.jackettQuality = {};
-
-            const list = (json && Array.isArray(json.Results)) ? json.Results : [];
-            const badge = detectBestQualityFromResults(list);
-            SESSION_CACHE.jackettQuality[task.cacheKey] = badge || null;
-
-            if (badge) task.onFound(badge);
-            processJackettQueue();
-        }, () => {
-            JACKETT_ACTIVE--;
-            if (!SESSION_CACHE.jackettQuality) SESSION_CACHE.jackettQuality = {};
-            SESSION_CACHE.jackettQuality[task.cacheKey] = null;
-            processJackettQueue();
-        });
-    }
-
-    function enqueueJackettQualityCheck(cardData, onFound) {
-        if (!SESSION_CACHE.jackettQuality) SESSION_CACHE.jackettQuality = {};
-        const cacheKey = `${cardData.media_type}_${cardData.id}`;
-
-        if (SESSION_CACHE.jackettQuality[cacheKey] !== undefined) {
-            const cached = SESSION_CACHE.jackettQuality[cacheKey];
-            if (cached) onFound(cached);
-            return;
-        }
-
-        const year = cardData.release_date ? cardData.release_date.slice(0, 4) : '';
-        JACKETT_QUEUE.push({
-            cacheKey: cacheKey,
-            title: cardData.title || cardData.original_title || '',
-            year: year,
-            onFound: onFound
-        });
-        processJackettQueue();
-    }
-
-
 
     const MENU_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>`;
 
@@ -206,6 +69,136 @@
         'vote_count.desc': 'По оценкам',
         'original_title.asc': 'По названию'
     };
+    const CUB_QUALITY_MAP = {};
+    const QUALITY_LABELS = {
+        bd: { text: 'Blu-Ray', color: '#27ae60' },
+        webdl: { text: 'WEB-DL', color: '#2980b9' },
+        update: { text: '4K / UHD', color: '#8e44ad' },
+        hdrip: { text: 'HD-Rip', color: '#16a085' },
+        dvdrip: { text: 'DVD-Rip', color: '#d35400' }
+    };
+
+    function preloadCubQuality() {
+        try {
+            const account = Lampa.Storage.get('account', '{}');
+            if (!account || !account.token || !Lampa.Manifest || !Lampa.Manifest.cub_domain) return;
+
+            const baseUrl = Lampa.Utils.protocol() + Lampa.Manifest.cub_domain + '/api/quality/';
+            const categories = ['dvdrip', 'hdrip', 'webdl', 'bd', 'update'];
+
+            categories.forEach((cat) => {
+                for (let p = 1; p <= 5; p++) {
+                    const req = new Lampa.Reguest();
+                    req.silent(`${baseUrl}${cat}/${p}`, (json) => {
+                        if (json && Array.isArray(json.results)) {
+                            json.results.forEach((item) => {
+                                if (item && item.id) {
+                                    CUB_QUALITY_MAP[item.id] = QUALITY_LABELS[cat];
+                                }
+                            });
+                        }
+                    }, () => {}, false, {
+                        headers: { token: account.token }
+                    });
+                }
+            });
+        } catch (e) {}
+    }
+
+    const JACKETT_QUEUE = [];
+    let JACKETT_ACTIVE = 0;
+    const JACKETT_MAX_CONCURRENT = 2;
+
+    function detectBestQualityFromResults(results) {
+        let bestRank = 0;
+        let bestBadge = null;
+
+        const candidates = [
+            { rank: 6, regex: /\b(2160p|4k|uhd)\b/i, text: '4K UHD', color: '#8e44ad' },
+            { rank: 5, regex: /\b(bdremux|blu-?ray|bdrip)\b/i, text: 'Blu-Ray', color: '#27ae60' },
+            { rank: 4, regex: /\b(web-?dl)\b/i, text: 'WEB-DL', color: '#2980b9' },
+            { rank: 3, regex: /\b(1080p)\b/i, text: '1080p', color: '#2980b9' },
+            { rank: 2, regex: /\b(web-?dlrip|webrip)\b/i, text: 'WEB-DLRip', color: '#3498db' },
+            { rank: 1, regex: /\b(hdrip|720p)\b/i, text: 'HD-Rip', color: '#16a085' }
+        ];
+
+        results.forEach((r) => {
+            const title = (r && r.Title) ? String(r.Title) : '';
+            if (!title) return;
+
+            for (let i = 0; i < candidates.length; i++) {
+                const c = candidates.at(i);
+                if (c.rank > bestRank && c.regex.test(title)) {
+                    bestRank = c.rank;
+                    bestBadge = { text: c.text, color: c.color };
+                    break;
+                }
+            }
+        });
+
+        return bestBadge;
+    }
+
+    function processJackettQueue() {
+        if (JACKETT_ACTIVE >= JACKETT_MAX_CONCURRENT || JACKETT_QUEUE.length === 0) return;
+
+        const task = JACKETT_QUEUE.shift();
+        if (!task) return;
+
+        if (SESSION_CACHE.jackettQuality[task.cacheKey] !== undefined) {
+            const cached = SESSION_CACHE.jackettQuality[task.cacheKey];
+            if (cached) task.onFound(cached);
+            processJackettQueue();
+            return;
+        }
+
+        let rawHost = Lampa.Storage.get('jackett_url', '');
+        const apiKey = Lampa.Storage.get('jackett_key', '1');
+        if (!rawHost) return;
+
+        if (!/^https?:\/\//i.test(rawHost)) {
+            rawHost = 'https://' + rawHost;
+        }
+        rawHost = rawHost.replace(/\/+$/, '');
+
+        JACKETT_ACTIVE++;
+        const query = encodeURIComponent(`${task.title} ${task.year}`.trim());
+        const url = `${rawHost}/api/v2.0/indexers/all/results?apikey=${encodeURIComponent(apiKey)}&Query=${query}`;
+
+        const req = new Lampa.Reguest();
+        req.timeout(8000);
+        req.silent(url, (json) => {
+            JACKETT_ACTIVE--;
+            const list = (json && Array.isArray(json.Results)) ? json.Results : [];
+            const badge = detectBestQualityFromResults(list);
+            SESSION_CACHE.jackettQuality[task.cacheKey] = badge || null;
+
+            if (badge) task.onFound(badge);
+            processJackettQueue();
+        }, () => {
+            JACKETT_ACTIVE--;
+            SESSION_CACHE.jackettQuality[task.cacheKey] = null;
+            processJackettQueue();
+        });
+    }
+
+    function enqueueJackettQualityCheck(cardData, onFound) {
+        const cacheKey = `${cardData.media_type}_${cardData.id}`;
+        if (SESSION_CACHE.jackettQuality[cacheKey] !== undefined) {
+            const cached = SESSION_CACHE.jackettQuality[cacheKey];
+            if (cached) onFound(cached);
+            return;
+        }
+
+        const year = cardData.release_date ? cardData.release_date.slice(0, 4) : '';
+        JACKETT_QUEUE.push({
+            cacheKey: cacheKey,
+            title: cardData.title || cardData.original_title || '',
+            year: year,
+            onFound: onFound
+        });
+        processJackettQueue();
+    }
 
     function getYearsList() {
         const currentYear = new Date().getFullYear();
@@ -238,7 +231,11 @@
         const html = $('<div class="seerr-catalog"></div>');
         const body = $('<div class="category-full"></div>');
         
+        let allItemsData = [];
+        let renderedCount = 0;
         let items = [];
+        const RENDER_CHUNK = 28;
+
         let active = false;
         let last_focused_index = 0;
         let page = 1;
@@ -273,14 +270,14 @@
                 const el = scroll.render().get(0);
                 if (el) {
                     const maxScroll = el.scrollHeight - el.clientHeight;
-                    if (maxScroll > 0 && (maxScroll - y) < 800) {
-                        this.loadNextPage();
+                    if (maxScroll > 0 && (maxScroll - y) < 900) {
+                        this.pumpVirtualDom();
                     }
                 }
             };
 
             scroll.onEnd = () => {
-                this.loadNextPage();
+                this.pumpVirtualDom();
             };
 
             if (SESSION_CACHE.state && SESSION_CACHE.state.itemsData.length > 0) {
@@ -288,7 +285,10 @@
                 total_pages = SESSION_CACHE.state.total_pages;
                 last_focused_index = SESSION_CACHE.state.last_focused_index || 0;
                 loaded_pages = Object.assign({}, SESSION_CACHE.state.loaded_pages || {});
-                this.buildCards(SESSION_CACHE.state.itemsData);
+                allItemsData = SESSION_CACHE.state.itemsData.slice();
+                
+                const initialTarget = Math.max(RENDER_CHUNK, last_focused_index + 14);
+                this.renderNextChunk(initialTarget);
                 this.start();
             } else {
                 this.activity.loader(true);
@@ -301,23 +301,28 @@
             return this.render();
         };
 
+        this.pumpVirtualDom = function () {
+            if (renderedCount < allItemsData.length) {
+                this.renderNextChunk(RENDER_CHUNK);
+            }
+            if ((allItemsData.length - renderedCount) < RENDER_CHUNK && page < total_pages) {
+                this.prefetchBatch(page + 1, Math.min(page + 3, total_pages));
+            }
+        };
+
+        this.renderNextChunk = function (count) {
+            if (renderedCount >= allItemsData.length) return;
+            const slice = allItemsData.slice(renderedCount, renderedCount + count);
+            renderedCount += slice.length;
+            this.buildCards(slice);
+        };
+
         this.prefetchBatch = function (fromPage, toPage) {
             for (let p = fromPage; p <= toPage; p++) {
                 if (p <= total_pages && !loaded_pages[p]) {
                     loaded_pages[p] = true;
                     if (p > page) page = p;
                     this.loadSpecificPage(p, true);
-                }
-            }
-        };
-
-        this.loadNextPage = function () {
-            if (page < total_pages) {
-                const nextPage = page + 1;
-                if (!loaded_pages[nextPage]) {
-                    loaded_pages[nextPage] = true;
-                    page = nextPage;
-                    this.loadSpecificPage(nextPage, true);
                 }
             }
         };
@@ -526,6 +531,8 @@
 
         this.resetAndReload = function () {
             page = 3;
+            allItemsData = [];
+            renderedCount = 0;
             items = [];
             loaded_pages = { 1: true, 2: true, 3: true };
             last_focused_index = 0;
@@ -538,8 +545,7 @@
             this.loadSpecificPage(2, true);
             this.loadSpecificPage(3, true);
         };
-
-                this.buildSingleUrl = function (mediaType, targetPage) {
+        this.buildSingleUrl = function (mediaType, targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const today = new Date().toISOString().slice(0, 10);
             const isMovie = mediaType === 'movie';
@@ -573,22 +579,7 @@
             let gteDate = '';
             let lteDate = '';
 
-            if (isReleased) {
-                // Режим "Вышедшие": берем релизы до сегодняшнего дня и идем в прошлое
-                lteDate = today;
-                if (filters.year === 'range') {
-                    if (filters.yearFrom) gteDate = `${filters.yearFrom}-01-01`;
-                    if (filters.yearTo && `${filters.yearTo}-12-31` < today) {
-                        lteDate = `${filters.yearTo}-12-31`;
-                    }
-                } else if (filters.year !== 'all') {
-                    gteDate = `${filters.year}-01-01`;
-                    if (`${filters.year}-12-31` < today) {
-                        lteDate = `${filters.year}-12-31`;
-                    }
-                }
-                if (gteDate && lteDate && gteDate > lteDate) gteDate = '';
-            } else if (isNewSeasons) {
+            if (isReleased || isNewSeasons) {
                 lteDate = today;
                 if (filters.year === 'range') {
                     if (filters.yearFrom) gteDate = `${filters.yearFrom}-01-01`;
@@ -677,7 +668,7 @@
                 this.activity.loader(false);
                 if (maxPages > total_pages) total_pages = maxPages;
 
-                if (hasError && !append && items.length === 0 && pending_requests === 0) {
+                if (hasError && !append && allItemsData.length === 0 && pending_requests === 0) {
                     Lampa.Noty.show('Ошибка подключения к Seerr');
                     this.start();
                     return;
@@ -694,7 +685,6 @@
                 return;
             }
 
-            // Режим "Фильмы + Сериалы": грузим оба потока параллельно и объединяем
             if (filters.type === 'all') {
                 const movieUrl = this.buildSingleUrl('movie', targetPage);
                 const tvUrl = this.buildSingleUrl('tv', targetPage);
@@ -732,8 +722,8 @@
             const onlyRu = Lampa.Storage.get('seerr_only_ru', false);
             const today = new Date().toISOString().slice(0, 10);
             const isSearch = Boolean(filters.search);
-            const minRating = filters.rating !== 'all' ? Number(filters.rating) : 0;
             const isReleased = filters.sort === 'released.desc';
+            const minRating = filters.rating !== 'all' ? Number(filters.rating) : 0;
 
             return rawResults.filter((el) => {
                 const itemType = el._resolvedType || el.mediaType || (filters.type === 'movie' ? 'movie' : 'tv');
@@ -813,7 +803,6 @@
                 return true;
             });
         };
-
         this.handleResults = function (rawResults, append, currentPage) {
             const filtered = this.filterResults(rawResults);
             const needDetailsCheck = (filters.type === 'tv_upcoming') || (filters.sort === 'next_episode.asc');
@@ -825,7 +814,7 @@
 
                 let checkedCount = 0;
                 const passedMap = {};
-                const minFreshDate = `${new Date().getFullYear() - 1}-01-01`; // Отсекаем заброшенные сериалы старше 1.5 лет
+                const minFreshDate = `${new Date().getFullYear() - 1}-01-01`;
 
                 const checkComplete = () => {
                     checkedCount++;
@@ -881,7 +870,6 @@
                         if (totalEps > 0 && airedEps >= totalEps) return;
                         if (filters.sort === 'next_episode.asc' && item._nextAirDate === '9999-12-31') return;
 
-                        // Защита от старых заброшенных сериалов (например, 2017 года без новых серий)
                         const lastActivityDate = (details.lastEpisodeToAir && details.lastEpisodeToAir.airDate) || seasonObj.airDate || '';
                         if (!details.nextEpisodeToAir && lastActivityDate && lastActivityDate < minFreshDate) return;
 
@@ -924,23 +912,26 @@
 
             this.applyFilteredResults(filtered, append, currentPage);
         };
+
         this.sortItemsArray = function (arr) {
             if (filters.sort === 'next_episode.asc') {
                 arr.sort((a, b) => (a._nextAirDate || '9999-12-31').localeCompare(b._nextAirDate || '9999-12-31'));
             } else if (filters.sort === 'release_date.asc') {
                 arr.sort((a, b) => (a.releaseDate || a.firstAirDate || '9999-12-31').localeCompare(b.releaseDate || b.firstAirDate || '9999-12-31'));
-            } else if (filters.sort === 'release_date.desc') {
+            } else if (filters.sort === 'release_date.desc' || filters.sort === 'released.desc') {
                 arr.sort((a, b) => (b.releaseDate || b.firstAirDate || '0000-01-01').localeCompare(a.releaseDate || a.firstAirDate || '0000-01-01'));
             } else if (filters.sort === 'popularity.desc') {
                 arr.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
             } else if (filters.sort === 'vote_average.desc') {
                 arr.sort((a, b) => (b.voteAverage || 0) - (a.voteAverage || 0));
-            } else if (filters.sort === 'release_date.desc' || filters.sort === 'released.desc') {
-                arr.sort((a, b) => (b.releaseDate || b.firstAirDate || '0000-01-01').localeCompare(a.releaseDate || a.firstAirDate || '0000-01-01'));
-            } 
+            }
         };
 
         this.applyFilteredResults = function (filtered, append, currentPage) {
+            const existingKeys = new Set(allItemsData.map(x => `${x._resolvedType || x.mediaType || 'm'}_${x.id}`));
+            const uniqueNew = filtered.filter(x => !existingKeys.has(`${x._resolvedType || x.mediaType || 'm'}_${x.id}`));
+            allItemsData = allItemsData.concat(uniqueNew);
+
             if (!SESSION_CACHE.state) {
                 SESSION_CACHE.state = {
                     filters: Object.assign({}, filters),
@@ -956,22 +947,23 @@
             }
             SESSION_CACHE.state.loaded_pages = Object.assign({}, loaded_pages);
 
-            const existingKeys = new Set(SESSION_CACHE.state.itemsData.map(x => `${x._resolvedType || x.mediaType || 'm'}_${x.id}`));
-            const uniqueNew = filtered.filter(x => !existingKeys.has(`${x._resolvedType || x.mediaType || 'm'}_${x.id}`));
-            SESSION_CACHE.state.itemsData = SESSION_CACHE.state.itemsData.concat(uniqueNew);
-
-            if (SESSION_CACHE.state.itemsData.length > 0) {
+            if (allItemsData.length > 0) {
                 body.find('.seerr-empty-msg').remove();
             }
 
-            // Для объединенного режима "Фильмы + Сериалы" или сортировки по ближайшей серии пересортировываем общий список
-            if ((filters.type === 'all' || filters.sort === 'next_episode.asc') && SESSION_CACHE.state.itemsData.length > 1) {
-                this.sortItemsArray(SESSION_CACHE.state.itemsData);
+            if ((filters.type === 'all' || filters.sort === 'next_episode.asc') && allItemsData.length > 1) {
+                this.sortItemsArray(allItemsData);
+                SESSION_CACHE.state.itemsData = allItemsData.slice();
+                const targetDomCount = Math.max(RENDER_CHUNK, renderedCount);
                 items = [];
+                renderedCount = 0;
                 body.empty();
-                this.buildCards(SESSION_CACHE.state.itemsData);
+                this.renderNextChunk(targetDomCount);
             } else {
-                this.buildCards(uniqueNew);
+                SESSION_CACHE.state.itemsData = allItemsData.slice();
+                if (renderedCount < RENDER_CHUNK) {
+                    this.renderNextChunk(RENDER_CHUNK - renderedCount);
+                }
             }
 
             if (!append) {
@@ -981,13 +973,12 @@
                 }
             }
 
-            if (items.length < 45 && page < Math.min(max_auto_pages, total_pages)) {
+            if (allItemsData.length < 60 && page < Math.min(max_auto_pages, total_pages)) {
                 this.prefetchBatch(page + 1, Math.min(page + 4, total_pages));
-            } else if (items.length === 0 && pending_requests === 0 && body.find('.seerr-empty-msg').length === 0) {
+            } else if (allItemsData.length === 0 && pending_requests === 0 && body.find('.seerr-empty-msg').length === 0) {
                 body.append('<div class="empty__title seerr-empty-msg" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
         };
-
         this.fetchTvSeasonInfo = function (tvId, cardEl) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const apiKey = Lampa.Storage.get('seerr_api_key', '');
@@ -1046,11 +1037,12 @@
                 headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' }
             });
         };
+
         this.buildCards = function (results) {
-            const showQuality = Lampa.Storage.get('seerr_show_quality', true);
             const showGenres = Lampa.Storage.get('seerr_show_genres', true);
             const showSeasons = Lampa.Storage.get('seerr_show_seasons', true);
             const showRating = Lampa.Storage.get('seerr_show_rating', true);
+            const showQuality = Lampa.Storage.get('seerr_show_quality', true);
 
             results.forEach((element) => {
                 const currentIndex = items.length;
@@ -1074,7 +1066,6 @@
                     release_year: cardData.release_date ? cardData.release_date.slice(0, 4) : 'Скоро'
                 });
 
-                // Подтягиваем текст ближе к своей карточке и добавляем нижний отступ от следующего ряда
                 card.css('margin-bottom', '1.4em');
                 card.find('.card__title').css({
                     'white-space': 'nowrap',
@@ -1100,7 +1091,7 @@
 
                     if (genreNames.length > 0) {
                         card.find('.card__title').after(
-                            `<div class="seerr-card-genres" style="font-size: 0.8em; color: rgba(255,255,255,0.6); margin-top: 0.2em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${genreNames.join(', ')}</div>`
+                            `<div class="seerr-card-genres" style="font-size: 0.8em; color: rgba(255,255,255,0.6); margin-top: 0.15em; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${genreNames.join(', ')}</div>`
                         );
                     }
                 }
@@ -1124,8 +1115,6 @@
                     this.fetchTvSeasonInfo(cardData.id, card);
                 }
 
-                // Бейдж качества из CUB (правый нижний угол постера)
-                // Бейдж качества (сначала мгновенно из CUB, если нет и релиз вышел — проверяем через Jackett)
                 if (showQuality) {
                     const renderQualityBadge = (q) => {
                         if (!q || card.find('.seerr-quality-badge').length > 0) return;
@@ -1146,10 +1135,7 @@
 
                 const img = card.find('.card__img');
                 if (cardData.poster_path) {
-                    const posterUrl = Lampa.TMDB.image('t/p/w300' + cardData.poster_path);
-                    img.attr('src', posterUrl);
-                    const preloader = new Image();
-                    preloader.src = posterUrl;
+                    img.attr('src', Lampa.TMDB.image('t/p/w300' + cardData.poster_path));
                 } else {
                     img.attr('src', './img/img_broken.svg');
                 }
@@ -1159,8 +1145,8 @@
                     if (SESSION_CACHE.state) SESSION_CACHE.state.last_focused_index = currentIndex;
                     scroll.update(card, true);
 
-                    if (items.length - currentIndex <= 30) {
-                        this.loadNextPage();
+                    if (items.length - currentIndex <= 14) {
+                        this.pumpVirtualDom();
                     }
                 });
 
@@ -1181,7 +1167,6 @@
 
             if (active) Lampa.Controller.collectionSet(scroll.render());
         };
-
         this.start = function () {
             active = true;
             Lampa.Controller.add('content', {
@@ -1216,8 +1201,10 @@
             html.remove();
         };
     }
+
     function initPlugin() {
         Lampa.Component.add(PLUGIN_ID, SeerrCatalogComponent);
+        preloadCubQuality();
 
         Lampa.SettingsApi.addComponent({
             component: PLUGIN_ID,
@@ -1293,10 +1280,8 @@
         Lampa.SettingsApi.addParam({
             component: PLUGIN_ID,
             param: { name: 'seerr_show_quality', type: 'trigger', default: true },
-            field: { name: 'Показывать качество (CUB)', description: 'Отображать бейдж качества (WEB-Rip, Blu-Ray), если релиз уже появился в сети' }
+            field: { name: 'Показывать качество (CUB + Jackett)', description: 'Отображать бейдж качества для вышедших релизов' }
         });
-
-        preloadCubQuality();
 
         try {
             const startParam = Lampa.Params && Lampa.Params.values && Lampa.Params.values.start_page;
@@ -1304,6 +1289,15 @@
                 startParam[PLUGIN_ID] = PLUGIN_NAME;
             }
         } catch (e) {}
+
+        if (Lampa.Storage.field('start_page') === PLUGIN_ID) {
+            window.start_deep_link = {
+                component: PLUGIN_ID,
+                page: 1,
+                url: '',
+                title: PLUGIN_NAME
+            };
+        }
 
         const menuItem = $(`
             <li class="menu__item selector" data-action="${PLUGIN_ID}">
@@ -1318,22 +1312,6 @@
         });
 
         $('.menu .menu__list').eq(0).append(menuItem);
-
-        if (Lampa.Storage.get('start_page', '') === PLUGIN_ID) {
-            let redirected = false;
-            const onFirstActivity = (e) => {
-                if (e.type === 'start' && !redirected) {
-                    redirected = true;
-                    Lampa.Listener.remove('activity', onFirstActivity);
-                    if (e.component !== PLUGIN_ID) {
-                        setTimeout(() => {
-                            Lampa.Activity.replace({ url: '', title: PLUGIN_NAME, component: PLUGIN_ID, page: 1 });
-                        }, 50);
-                    }
-                }
-            };
-            Lampa.Listener.follow('activity', onFirstActivity);
-        }
     }
 
     if (window.appready) {
