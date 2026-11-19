@@ -87,7 +87,7 @@
             const categories = ['dvdrip', 'hdrip', 'webdl', 'bd', 'update'];
 
             categories.forEach((cat) => {
-                for (let p = 1; p <= 5; p++) {
+                for (let p = 1; p <= 2; p++) {
                     const req = new Lampa.Reguest();
                     req.silent(`${baseUrl}${cat}/${p}`, (json) => {
                         if (json && Array.isArray(json.results)) {
@@ -127,7 +127,7 @@
             if (!title) return;
 
             for (let i = 0; i < candidates.length; i++) {
-                const c = candidates.at(i);
+                const c = candidates[i];
                 if (c.rank > bestRank && c.regex.test(title)) {
                     bestRank = c.rank;
                     bestBadge = { text: c.text, color: c.color };
@@ -234,7 +234,7 @@
         let allItemsData = [];
         let renderedCount = 0;
         let items = [];
-        const RENDER_CHUNK = 28;
+        const RENDER_CHUNK = 14;
 
         let active = false;
         let last_focused_index = 0;
@@ -242,8 +242,8 @@
         let total_pages = 1;
         let loaded_pages = {};
         let pending_requests = 0;
-        let prefetch_pages_target = Number(Lampa.Storage.get('seerr_prefetch_pages', '6'));
-        let max_auto_pages = 40;
+        let prefetch_pages_target = Number(Lampa.Storage.get('seerr_prefetch_pages', '3'));
+        let max_auto_pages = 8;
 
         const defaultType = Lampa.Storage.get('seerr_default_type', 'all');
         const defaultSort = Lampa.Storage.get('seerr_default_sort', 'release_date.asc');
@@ -292,10 +292,9 @@
                 this.start();
             } else {
                 this.activity.loader(true);
-                loaded_pages = { 1: true, 2: true, 3: true };
+                page = 1;
+                loaded_pages = { 1: true };
                 this.loadSpecificPage(1, false);
-                this.loadSpecificPage(2, true);
-                this.loadSpecificPage(3, true);
             }
 
             return this.render();
@@ -531,11 +530,11 @@
         };
 
         this.resetAndReload = function () {
-            page = 3;
+            page = 1;
             allItemsData = [];
             renderedCount = 0;
             items = [];
-            loaded_pages = { 1: true, 2: true, 3: true };
+            loaded_pages = { 1: true };
             last_focused_index = 0;
             pending_requests = 0;
             SESSION_CACHE.state = null;
@@ -543,9 +542,8 @@
             scroll.reset();
             this.activity.loader(true);
             this.loadSpecificPage(1, false);
-            this.loadSpecificPage(2, true);
-            this.loadSpecificPage(3, true);
         };
+
         this.buildSingleUrl = function (mediaType, targetPage) {
             const domain = Lampa.Storage.get('seerr_url', '').replace(/\/+$/, '');
             const today = new Date().toISOString().slice(0, 10);
@@ -635,6 +633,10 @@
             req.timeout(10000);
             req.native(url, (json) => {
                 if (json && Array.isArray(json.results)) {
+                    const cacheKeys = Object.keys(SESSION_CACHE.data);
+                    if (cacheKeys.length >= 25) {
+                        delete SESSION_CACHE.data[cacheKeys];
+                    }
                     const entry = {
                         results: json.results,
                         totalPages: json.totalPages || 1,
@@ -840,10 +842,10 @@
                     if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
                         targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
                     } else {
-                        targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                        targetSeasonNum = regularSeasons[-1].seasonNumber;
                     }
 
-                    const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons.at(-1);
+                    const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons[-1];
                     if (!seasonObj) return;
 
                     const totalEps = seasonObj.episodeCount || 0;
@@ -973,13 +975,13 @@
 
             if (!append) {
                 this.start();
-                if (prefetch_pages_target > 3 && total_pages > 3) {
-                    this.prefetchBatch(4, Math.min(prefetch_pages_target, total_pages));
+                if (prefetch_pages_target > 1 && total_pages > 1) {
+                    this.prefetchBatch(2, Math.min(prefetch_pages_target, total_pages));
                 }
             }
 
-            if (allItemsData.length < 60 && page < Math.min(max_auto_pages, total_pages)) {
-                this.prefetchBatch(page + 1, Math.min(page + 4, total_pages));
+            if (allItemsData.length < 20 && page < Math.min(max_auto_pages, total_pages)) {
+                this.prefetchBatch(page + 1, Math.min(page + 2, total_pages));
             } else if (allItemsData.length === 0 && pending_requests === 0 && body.find('.seerr-empty-msg').length === 0) {
                 body.append('<div class="empty__title seerr-empty-msg" style="padding: 2em;">По заданным фильтрам ничего не найдено</div>');
             }
@@ -999,10 +1001,10 @@
                 if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
                     targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
                 } else {
-                    targetSeasonNum = regularSeasons.at(-1).seasonNumber;
+                    targetSeasonNum = regularSeasons[-1].seasonNumber;
                 }
 
-                const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons.at(-1);
+                const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons[-1];
                 if (!seasonObj) return;
 
                 const totalEps = seasonObj.episodeCount || 0;
@@ -1177,7 +1179,7 @@
             Lampa.Controller.add('content', {
                 toggle: () => {
                     Lampa.Controller.collectionSet(scroll.render());
-                    const targetCard = items.at(last_focused_index) || false;
+                    const targetCard = items[last_focused_index] || false;
                     Lampa.Controller.collectionFocus(targetCard, scroll.render());
                 },
                 left: () => {
