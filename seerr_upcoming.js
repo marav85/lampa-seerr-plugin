@@ -635,7 +635,7 @@
                 if (json && Array.isArray(json.results)) {
                     const cacheKeys = Object.keys(SESSION_CACHE.data);
                     if (cacheKeys.length >= 25) {
-                        delete SESSION_CACHE.data[cacheKeys];
+                        delete SESSION_CACHE.data[cacheKeys[0]];
                     }
                     const entry = {
                         results: json.results,
@@ -841,8 +841,8 @@
                     let targetSeasonNum = null;
                     if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
                         targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
-                    } else {
-                        targetSeasonNum = regularSeasons[-1].seasonNumber;
+                    } else if (regularSeasons[regularSeasons.length - 1]) {
+                        targetSeasonNum = regularSeasons[regularSeasons.length - 1].seasonNumber;
                     }
 
                     const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons[-1];
@@ -998,11 +998,11 @@
                 if (regularSeasons.length === 0) return;
 
                 let targetSeasonNum = null;
-                if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
-                    targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
-                } else {
-                    targetSeasonNum = regularSeasons[-1].seasonNumber;
-                }
+                    if (details.nextEpisodeToAir && details.nextEpisodeToAir.seasonNumber > 0) {
+                        targetSeasonNum = details.nextEpisodeToAir.seasonNumber;
+                    } else if (regularSeasons[regularSeasons.length - 1]) {
+                        targetSeasonNum = regularSeasons[regularSeasons.length - 1].seasonNumber;
+                    }
 
                 const seasonObj = regularSeasons.find(s => s.seasonNumber === targetSeasonNum) || regularSeasons[-1];
                 if (!seasonObj) return;
